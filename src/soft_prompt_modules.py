@@ -32,7 +32,7 @@ class PromptEmbedding(torch.nn.Module):
             prompt_length (int): length of the prompt tokens which are prepended to the input.
             embedding_dim (int): the size of each embedding vector
             normal_embedder (torch.nn.Embedding): this is the embedding table for the normal tokens
-            of the input/output sequence used by roberta model.
+            of the input/output sequence used by llm.
         """
         super().__init__()
         self.prompt_length = prompt_length
@@ -91,35 +91,10 @@ def create_softprompt(lm_type: str, model: torch.nn.Module) -> torch.nn.Module:
     HuggingFace to include the soft prompt vectors in the input."""
     # prompt length
     p_len = FLAGS.prompt_length
-    if lm_type == "roberta":
-        d_model = model.config.hidden_size
-        vocab_size = model.config.vocab_size
-
-        prompt_embedding = PromptEmbedding(p_len, d_model, model.roberta.get_input_embeddings(), vocab_size, lm_type=lm_type)
-
-        # update the general embedding module of HuggingFace roberta.
-        # https://github.com/huggingface/transformers/blob/main/src/transformers/models/roberta/modeling_roberta.py
-        model.set_input_embeddings(prompt_embedding)
-        return model
-
-    elif lm_type == "llama2":
+    if lm_type == "llama2":
         d_model = model.config.hidden_size
         vocab_size = model.config.vocab_size
 
         prompt_embedding = PromptEmbedding(p_len, d_model, model.get_input_embeddings(), vocab_size, lm_type=lm_type)
         model.set_input_embeddings(prompt_embedding)
-        return model
-
-    elif lm_type == "t5":
-        d_model = model.config.d_model
-        vocab_size = model.config.vocab_size
-
-        prompt_embedding = PromptEmbedding(p_len, d_model, model.shared, vocab_size, lm_type=lm_type)
-
-        # update the general shared embedding module of huggingface T5.
-        # now every call by t5_model.shared(input_ids) will use our forward method of the PromptEmbedding
-        # we don't want to update the decoder embedding to add the prompt tokens for the output tokens.
-        # see https://github.com/huggingface/transformers/blob/main/src/transformers/models/t5/modeling_t5.py#L1344
-        model.shared = prompt_embedding
-        model.encoder.embed_tokens = prompt_embedding
         return model
