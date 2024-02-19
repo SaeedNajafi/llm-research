@@ -6,11 +6,12 @@ source: https://github.com/VectorInstitute/vectorlm/blob/master/vectorlm/utils/m
 from __future__ import annotations
 
 import functools
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import torch
 import torch.distributed as dist
-from peft import PeftConfig, PeftModel
+from absl import flags
+from peft import LoraConfig, TaskType, get_peft_model
 from torch import nn
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
@@ -20,7 +21,20 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, PreTrainedModel, PreTrainedTokenizer
+from transformers import BitsAndBytesConfig, LlamaForCausalLM, LlamaTokenizer, PreTrainedModel, PreTrainedTokenizer
+
+from src.soft_prompt_modules import create_softprompt
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string(
+    "llama2_pretrained_model", "/model-weights/Llama-2-7b-hf", "initial pre-trained model to use as backbone LM."
+)
+
+flags.DEFINE_integer("maximum_sequence_length", 1024, "The maximum sequence length.")
+flags.DEFINE_integer("r", 8, "rank hyper-parameter for lora.")
+flags.DEFINE_integer("lora_alpha", 32, "alpha hyper-parameter for lora.")
+flags.DEFINE_float("lora_dropout", 0.1, "dropout rate hyper-parameter for lora.")
 
 # Make sure we have some tokens defined for the llama, if not defined in the model.
 _EXTRA_TOKENS = {
@@ -34,58 +48,50 @@ _EXTRA_TOKENS = {
 
 
 def load_peft_model_and_tokenizer(
-    path: str,
     use_mp: bool,
     use_fa: bool,
-    max_seq_len: int,
-    peft_adapter_path: str,
-    adapter_name: str = "default",
+    adapter_name: str = "no_adapter",
     is_trainable: bool = False,
-    config: PeftConfig | None = None,
-) -> tuple[PeftModel, PreTrainedTokenizer]:
+) -> tuple[Union[nn.Module, None], Union[PreTrainedTokenizer, None]]:
     """Load a trained PEFT adapter to the base model and return the PeftModel.
-
-    E.g., a base llama-2-13b-chat-hf w/ adapter named nifty
-    ├── adapters_lora
-        ├── llama-2-13b-chat-hf+nifty
 
     Args:
     ----
-        path: The path where the model and tokenizer are stored.
         use_mp: Whether to use mixed-precision.
         use_fa: Whether to use Flash Attention 2.
-        max_seq_len: The maximum sequence length.
-        peft_adapter_path: path to the adapter model, e.g.
-            adapters_lora/llama-2-13b-chat-hf+nifty
-        adapter_name: e.g. nifty
+        adapter_name: e.g. lora
         is_trainable: train or inference mode
-        config: additional configs
 
     Returns:
     -------
         The PEFT model and tokenizer.
     """
-    model, tokenizer = load_model_and_tokenizer(
-        path,
-        use_mp,
-        use_fa,
-        max_seq_len,
-    )
-    peft_model = PeftModel.from_pretrained(
-        model,
-        peft_adapter_path,
-        adapter_name,
-        is_trainable,
-        config,
-    )
-    return peft_model, tokenizer
+    model, tokenizer = load_model_and_tokenizer(use_mp, use_fa, define_extra_tokens=True, load_in_4bit=True)
+    if adapter_name == "no_adapter":
+        return model, tokenizer
+
+    elif adapter_name == "lora":
+        peft_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=not is_trainable,
+            r=FLAGS.r,
+            lora_alpha=FLAGS.lora_alpha,
+            lora_dropout=FLAGS.lora_dropout,
+        )
+        peft_model = get_peft_model(model, peft_config)
+        peft_model.print_trainable_parameters()
+        return peft_model, tokenizer
+
+    elif adapter_name == "soft_prompt_tuning":
+        peft_model = create_softprompt(lm_type="llama2", model=model)
+        return peft_model, tokenizer
+
+    return None, None
 
 
 def load_model_and_tokenizer(
-    path: str,
     use_mp: bool,
     use_fa: bool,
-    max_seq_len: int,
     define_extra_tokens: Optional[bool] = True,
     load_in_4bit: Optional[bool] = True,
 ) -> tuple[PreTrainedModel, PreTrainedTokenizer]:
@@ -93,10 +99,8 @@ def load_model_and_tokenizer(
 
     Args:
     ----
-        path: The path where the model and tokenizer are stored.
         use_mp: Whether to use mixed-precision.
         use_fa: Whether to use Flash Attention 2.
-        max_seq_len: The maximum sequence length.
 
     Returns:
     -------
@@ -121,18 +125,18 @@ def load_model_and_tokenizer(
             bnb_4bit_use_double_quant=False,
         )
         model_args["quantization_config"] = quant_config
-    model = AutoModelForCausalLM.from_pretrained(
-        path,
+    model = LlamaForCausalLM.from_pretrained(
+        FLAGS.llama2_pretrained_model,
         **model_args,
     )
 
     # load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(path)
+    tokenizer = LlamaTokenizer.from_pretrained(FLAGS.llama2_pretrained_model)
     if define_extra_tokens:
         tokenizer.add_special_tokens(_EXTRA_TOKENS)
     tokenizer.padding_side = "right"  # Fix weird overflow issue with fp16 training
 
-    tokenizer.model_max_length = max_seq_len
+    tokenizer.model_max_length = FLAGS.maximum_sequence_length
 
     # extend embeddings to a multiple so we use Tensor cores
     multiple = 64 if "A100" in torch.cuda.get_device_name() else 8
