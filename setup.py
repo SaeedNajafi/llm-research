@@ -1,4 +1,5 @@
 """ setup.py - Main setup module """
+
 import os
 
 from setuptools import find_packages, setup
@@ -8,29 +9,30 @@ README = open(os.path.join(HERE, "README.md")).read()
 VERSION = "0.1"
 
 # Publicly Available Packages (PyPi)
-INSTALL_REQUIRES = ["ipython",
-                    "jupyterlab",
-                    "matplotlib",
-                    "torchvision",
-                    "torchaudio",
-                    "torchtext",
-                    "peft",
-                    "transformers",
-                    "datasets",
-                    "tensorflow",
-                    "sentencepiece",
-                    "nltk",
-                    "evaluate",
-                    "bert-score",
-                    "supar",
-                    "pandas",
-                    "scikit-learn",
-                    "tensorboard",
-                    "absl-py",
-                    "tqdm",
-                    "bitsandbytes",
-                    "accelerate"
-                    ]
+INSTALL_REQUIRES = [
+    "ipython",
+    "jupyterlab",
+    "matplotlib",
+    "torchvision",
+    "torchaudio",
+    "torchtext",
+    "tensorflow",
+    "pandas",
+    "scikit-learn",
+    "tensorboard",
+    "transformers",
+    "bitsandbytes",
+    "accelerate",
+    "datasets",
+    "peft",
+    "sentencepiece",
+    "nltk",
+    "evaluate",
+    "bert-score",
+    "supar",
+    "absl-py",
+    "tqdm",
+]
 
 DEV_REQUIRES = [
     "nbqa[toolchain]",
