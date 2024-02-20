@@ -6,12 +6,12 @@ source: https://github.com/VectorInstitute/vectorlm/blob/master/vectorlm/utils/m
 from __future__ import annotations
 
 import functools
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 import torch
 import torch.distributed as dist
 from absl import flags
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, PromptTuningConfig, PromptTuningInit, TaskType, get_peft_model
 from torch import nn
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
@@ -23,8 +23,6 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataP
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
 from transformers import BitsAndBytesConfig, LlamaForCausalLM, LlamaTokenizer, PreTrainedModel, PreTrainedTokenizer
 
-from src.soft_prompt_modules import create_softprompt
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
@@ -35,7 +33,10 @@ flags.DEFINE_integer("maximum_sequence_length", 1024, "The maximum sequence leng
 flags.DEFINE_integer("r", 8, "rank hyper-parameter for lora.")
 flags.DEFINE_integer("lora_alpha", 32, "alpha hyper-parameter for lora.")
 flags.DEFINE_float("lora_dropout", 0.1, "dropout rate hyper-parameter for lora.")
-
+flags.DEFINE_integer("prompt_length", 25, "length of the prompts in the input sequence for soft prompt tuning.")
+flags.DEFINE_string(
+    "prompt_tuning_init_text", "Classify the text for me.", "What text to use to initialize the soft prompt embedding."
+)
 # Make sure we have some tokens defined for the llama, if not defined in the model.
 _EXTRA_TOKENS = {
     "pad_token": "<pad>",
@@ -50,9 +51,9 @@ _EXTRA_TOKENS = {
 def load_peft_model_and_tokenizer(
     use_mp: bool,
     use_fa: bool,
-    adapter_name: str = "no_adapter",
+    adapter_name: str = "lora",
     is_trainable: bool = False,
-) -> tuple[Union[nn.Module, None], Union[PreTrainedTokenizer, None]]:
+) -> tuple[nn.Module, PreTrainedTokenizer]:
     """Load a trained PEFT adapter to the base model and return the PeftModel.
 
     Args:
@@ -67,26 +68,30 @@ def load_peft_model_and_tokenizer(
         The PEFT model and tokenizer.
     """
     model, tokenizer = load_model_and_tokenizer(use_mp, use_fa, define_extra_tokens=True, load_in_4bit=True)
-    if adapter_name == "no_adapter":
-        return model, tokenizer
-
-    elif adapter_name == "lora":
-        peft_config = LoraConfig(
+    if adapter_name == "lora":
+        lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             inference_mode=not is_trainable,
             r=FLAGS.r,
+            init_lora_weights=True,
             lora_alpha=FLAGS.lora_alpha,
             lora_dropout=FLAGS.lora_dropout,
         )
-        peft_model = get_peft_model(model, peft_config)
+        peft_model = get_peft_model(model, lora_config)
         peft_model.print_trainable_parameters()
-        return peft_model, tokenizer
 
     elif adapter_name == "soft_prompt_tuning":
-        peft_model = create_softprompt(lm_type="llama2", model=model)
-        return peft_model, tokenizer
+        prompt_tuning_config = PromptTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+            prompt_tuning_init=PromptTuningInit.TEXT,
+            num_virtual_tokens=FLAGS.prompt_length,
+            prompt_tuning_init_text=FLAGS.prompt_tuning_init_text,
+            tokenizer_name_or_path=FLAGS.llama2_pretrained_model,
+        )
+        peft_model = get_peft_model(model, prompt_tuning_config)
+        peft_model.print_trainable_parameters()
 
-    return None, None
+    return peft_model, tokenizer
 
 
 def load_model_and_tokenizer(
