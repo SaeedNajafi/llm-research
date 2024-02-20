@@ -25,9 +25,7 @@ from transformers import BitsAndBytesConfig, LlamaForCausalLM, LlamaTokenizer, P
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string(
-    "llama2_pretrained_model", "/model-weights/Llama-2-7b-hf", "initial pre-trained model to use as backbone LM."
-)
+flags.DEFINE_string("llama2_pretrained_model", "meta-llama/Llama-2-7b-hf", "initial pre-trained model to use as backbone LM.")
 
 flags.DEFINE_integer("maximum_sequence_length", 1024, "The maximum sequence length.")
 flags.DEFINE_integer("r", 8, "rank hyper-parameter for lora.")
@@ -116,11 +114,13 @@ def load_model_and_tokenizer(
 
     if use_mp:
         model_args["torch_dtype"] = torch.bfloat16
-    if use_fa:
-        if not use_mp:
-            msg = "Use FA with bf16 (mixed precision)"
-            raise ValueError(msg)
-        model_args["attn_implementation"] = "flash_attention_2"
+
+    if not torch.backends.mps.is_available():
+        if use_fa:
+            if not use_mp:
+                msg = "Use FA with bf16 (mixed precision)"
+                raise ValueError(msg)
+            model_args["attn_implementation"] = "flash_attention_2"
 
     if load_in_4bit:
         quant_config = BitsAndBytesConfig(
@@ -143,12 +143,15 @@ def load_model_and_tokenizer(
 
     tokenizer.model_max_length = FLAGS.maximum_sequence_length
 
-    # extend embeddings to a multiple so we use Tensor cores
-    multiple = 64 if "A100" in torch.cuda.get_device_name() else 8
-    model.resize_token_embeddings(
-        len(tokenizer),
-        pad_to_multiple_of=multiple,
-    )
+    if not torch.backends.mps.is_available():
+        # I am not developing the code on mac.
+        if torch.cuda.is_available():
+            # extend embeddings to a multiple so we use Tensor cores
+            multiple = 64 if "A100" in torch.cuda.get_device_name() else 8
+            model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=multiple)
+    else:
+        # I am developing the code on mac.
+        model.resize_token_embeddings(len(tokenizer))
 
     # re-define token ids for the model.
     if define_extra_tokens:
@@ -181,7 +184,7 @@ def fsdp_config(
         msg = f"The sharding strategy {strategy} does not exist."
         raise ValueError(msg)
 
-    ret_dict = {}
+    ret_dict: Dict[str, Any] = {}
     if use_mp:
         mp_policy = MixedPrecision(
             param_dtype=torch.bfloat16,
