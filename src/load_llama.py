@@ -156,7 +156,7 @@ def load_model_and_tokenizer(
     # re-define token ids for the model.
     if define_extra_tokens:
         for extra_token_key, extra_token_val in _EXTRA_TOKENS.items():
-            extra_token_id = tokenizer.convert_token_to_ids([extra_token_val])[0]
+            extra_token_id = tokenizer.convert_tokens_to_ids([extra_token_val])[0]
             model.config.__setattr__(f"{extra_token_key}_id", extra_token_id)
 
     return model, tokenizer
