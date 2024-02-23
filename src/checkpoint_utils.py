@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 import re
 
@@ -133,7 +131,8 @@ def load_model(model: nn.Module, input_dir: str, rank: int) -> nn.Module:
     -------
         The loaded model.
     """
-    weights_name = f"model_rank{rank}.bin"
+    # weights_name = f"model_rank{rank}.bin"
+    weights_name = "model.bin"
     input_model_file = os.path.join(input_dir, weights_name)
     cfg = LocalStateDictConfig(offload_to_cpu=True)
     with FSDP.state_dict_type(model, StateDictType.LOCAL_STATE_DICT, cfg):
