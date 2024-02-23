@@ -37,6 +37,7 @@ _EXTRA_TOKENS = {
     "cls_token": "<CLS>",
 }
 
+target_modules = ['q_proj','v_proj']
 
 def load_peft_model_and_tokenizer(
     load_in_4bit: bool = True,
@@ -66,6 +67,7 @@ def load_peft_model_and_tokenizer(
             bias="none",
             init_lora_weights="loftq",
             loftq_config=LoftQConfig(loftq_bits=4),
+            target_modules=target_modules
         )
 
     elif adapter_name == "soft_prompt_tuning":
