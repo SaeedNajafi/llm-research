@@ -56,12 +56,13 @@ function install_package () {
   elif [ "$OS" = "colab" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
 		pip3 install --no-cache-dir tensorflow tensorboard
-		export CUDA_HOME=/usr/local/cuda
+		export CUDA_HOME=/usr
 		pip3 install -e .'[dev]'
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
-	fi
+        pip3 install -U "transformers==4.38.1" --upgrade
+   fi
 
 }
 
