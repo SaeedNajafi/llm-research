@@ -1,32 +1,26 @@
 """Main binary to run the application to train or test with the model."""
 
+import math
 import os
+import random
 from typing import Any
 
+import pandas as pd
 import torch
 import torch.distributed as dist
 from absl import app, flags
-from torch.nn.parallel import DistributedDataParallel as DDP
-
 from bitsandbytes.optim.adamw import PagedAdamW8bit
+from datasets import ClassLabel, load_dataset
+from huggingface_hub import notebook_login
+from IPython.display import HTML, display
+from torch.nn.parallel import DistributedDataParallel as DDP
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, Trainer, TrainingArguments, set_seed
+
 from src.load_gemma import load_peft_model_and_tokenizer
 from src.model_utils import set_random_seed
 
-from huggingface_hub import notebook_login
-from datasets import load_dataset
-from datasets import ClassLabel
-import random
-import pandas as pd
-from IPython.display import display, HTML
-from transformers import GPT2Tokenizer, GPT2LMHeadModel
-from transformers import Trainer, TrainingArguments
-from transformers import set_seed
-import math
-
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("seed", 42, "the seed number")
-
-
 
 
 def setup() -> None:
@@ -61,21 +55,20 @@ def main(argv: Any) -> None:
 
     model, tokenizer = load_peft_model_and_tokenizer(load_in_4bit=True, adapter_name="lora", is_trainable=True)
     gig_factor = 1024 * 1024 * 1024
-    print(torch.cuda.mem_get_info()[1]/gig_factor)
-    print(torch.cuda.mem_get_info()[0]/gig_factor)
+    print(torch.cuda.mem_get_info()[1] / gig_factor)
+    print(torch.cuda.mem_get_info()[0] / gig_factor)
     ddp_model = DDP(model, device_ids=[local_rank])
-    print(torch.cuda.mem_get_info()[0]/gig_factor)
+    print(torch.cuda.mem_get_info()[0] / gig_factor)
 
-    
     def show_random_elements(dataset, num_examples=10):
         assert num_examples <= len(dataset), "Can't pick more elements than there are in the dataset."
         picks = []
         for _ in range(num_examples):
-            pick = random.randint(0, len(dataset)-1)
+            pick = random.randint(0, len(dataset) - 1)
             while pick in picks:
-                pick = random.randint(0, len(dataset)-1)
+                pick = random.randint(0, len(dataset) - 1)
             picks.append(pick)
-    
+
         df = pd.DataFrame(dataset[picks])
         for column, typ in dataset.features.items():
             if isinstance(typ, ClassLabel):
@@ -90,17 +83,16 @@ def main(argv: Any) -> None:
         concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
         total_length = len(concatenated_examples[list(examples.keys())[0]])
         # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
-            # customize this part to your needs.
+        # customize this part to your needs.
         total_length = (total_length // block_size) * block_size
         # Split by chunks of max_len.
         result = {
-            k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
-            for k, t in concatenated_examples.items()
+            k: [t[i : i + block_size] for i in range(0, total_length, block_size)] for k, t in concatenated_examples.items()
         }
         result["labels"] = result["input_ids"].copy()
         return result
 
-    datasets = load_dataset('wikitext', 'wikitext-2-v1')
+    datasets = load_dataset("wikitext", "wikitext-2-v1")
     train_split = datasets["train"]
     smaller_train = train_split.train_test_split(train_size=100)
     datasets["train"] = smaller_train["train"]
@@ -119,10 +111,10 @@ def main(argv: Any) -> None:
 
     # load optimizer
     optimizer = PagedAdamW8bit(ddp_model.parameters(), lr=0.001)
-    print(torch.cuda.mem_get_info()[0]/gig_factor)
+    print(torch.cuda.mem_get_info()[0] / gig_factor)
     training_args = TrainingArguments(
         f"wikitext2",
-        evaluation_strategy = "epoch",
+        evaluation_strategy="epoch",
         push_to_hub=False,
     )
     trainer = Trainer(
@@ -130,7 +122,7 @@ def main(argv: Any) -> None:
         args=training_args,
         train_dataset=lm_datasets["train"],
         eval_dataset=lm_datasets["validation"],
-        optimizers=(optimizer, None)
+        optimizers=(optimizer, None),
     )
     trainer.train()
     eval_results = trainer.evaluate()
@@ -139,6 +131,7 @@ def main(argv: Any) -> None:
     del ddp_model
     del optimizer
     del model
+
 
 if __name__ == "__main__":
     setup()

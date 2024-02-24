@@ -1,266 +1,87 @@
 import os
-import re
+from typing import Any, Iterator, Optional
 
 import torch
+import torch.distributed as dist
+from absl import flags, logging
 from peft import PeftModel
-from torch import nn
-from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
-from torch.distributed.fsdp import LocalStateDictConfig  # flattened params, usable only by FSDP
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import StateDictType
-from torch.distributed.fsdp.api import LocalOptimStateDictConfig
-from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.optimizer import Optimizer
+from torch.utils.data.sampler import Sampler
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("model_path", "/tmp/", "main directory to save or load the model from")
 
 
-def checkpoint_exists(output_dir: str) -> bool:
-    """Check if a checkpoint exists.
-
-    Args:
-    ----
-        output_dir: The main saving directory.
-
-    Returns:
-    -------
-        Returns whether a checkpoint exists.
-    """
-    if os.path.isdir(os.path.join(output_dir, "checkpoints")):
-        return True
-    return False
+def save_data(data: Any, path: str) -> None:
+    """Save the object to the file."""
+    logging.DEBUG(f"Saving to {path}")
+    torch.save(data, f"{path}_temp")
+    os.replace(f"{path}_temp", path)
 
 
-def save_metadata(
-    out_dir: str,
-    meta_dict: dict[str, int | torch.Tensor],
+def save_state(
+    model: torch.nn.Module,
+    checkpoint_name: str,
+    optimizer: Optional[Optimizer] = None,
+    scheduler: Optional[LRScheduler] = None,
+    sampler: Optional[Sampler] = None,
+    dataloader_iter: Optional[Iterator] = None,
+    rng: Optional[torch.Tensor] = None,
+    model_path: Optional[str] = None,
 ) -> None:
-    """Save training metadata.
+    """Save the modules to the model_path for the specified checkpoint name.
 
-    Args:
-    ----
-        out_dir: The directory to save to.
-        meta_dict: The dictionary containing the meta data.
+    Save the extra modules for the training state. Save only for the
+    rank 0 process.
     """
-    os.makedirs(out_dir, exist_ok=True)
-    torch.save(meta_dict, os.path.join(out_dir, "meta_data.pkl"))
+    if dist.get_rank() == 0:
+        m_path = FLAGS.model_path
+        if model_path is not None:
+            m_path = model_path
+        if not os.path.exists(m_path):
+            os.makedirs(m_path)
 
+        full_path = os.path.join(m_path, checkpoint_name)
 
-def load_metadata(
-    in_dir: str,
-) -> tuple[int, int, list[int]]:
-    """Load training metadata.
-
-    Args:
-    ----
-        in_dir: The directory where the meta data is saved.
-
-    Returns:
-    -------
-        A tuple containing the checkpointed step, epoch, and the processed
-            training dataset ids.
-    """
-    save_path = os.path.join(in_dir, "meta_data.pkl")
-    meta_dict = torch.load(save_path)
-    checkpointed_step = meta_dict["tr_step"]
-    checkpointed_epoch = meta_dict["epoch"]
-    to_remove = meta_dict["processed_ids"].int().tolist()
-    return checkpointed_step, checkpointed_epoch, to_remove
-
-
-def get_latest_checkpoint_dir(folder_path: str) -> str:
-    """Find the latest checkpoint directory using regex.
-
-    Args:
-    ----
-        folder_path: The path to where checkpoints are saved.
-
-    Returns:
-    -------
-        The subpath (i.e. two levels) of the latest checkpoint's directory.
-    """
-    epoch_pattern = re.compile(r"^epoch_(\d+)$")
-    folder_pattern = re.compile(r"^checkpoint_(\d+)$")
-
-    def _find_largest(pattern: re.Pattern, folder: str) -> str:
-        max_integer = -1
-        max_folder_name = ""
-
-        for folder_name in os.listdir(folder):
-            match = pattern.match(folder_name)
-            if match:
-                current_integer = int(match.group(1))
-                if current_integer > max_integer:
-                    max_integer = current_integer
-                    max_folder_name = folder_name
-        return max_folder_name
-
-    epoch_folder = _find_largest(epoch_pattern, folder_path)
-    folder_path = os.path.join(folder_path, epoch_folder)
-    checkpoint_folder = _find_largest(folder_pattern, folder_path)
-    return os.path.join(epoch_folder, checkpoint_folder)
-
-
-def save_model(model: nn.Module, output_dir: str, rank: int) -> None:
-    """Save the sharded model's weights.
-
-    Args:
-    ----
-        model: The sharded model.
-        output_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    weights_name = f"model_rank{rank}.bin"
-    output_model_file = os.path.join(output_dir, weights_name)
-    with FSDP.state_dict_type(model, StateDictType.LOCAL_STATE_DICT):
-        print(f"Saving model to {output_model_file}")
+        model_full_path = f"{full_path}_model"
+        logging.DEBUG(f"Saving model to {model_full_path}")
         # This will call the PEFTmodel save.
-        model.save_pretrained(output_model_file)
-        print(f"Model saved to {output_model_file}")
+        model.save_pretrained(f"{model_full_path}_temp")
+
+        # according to the GNU spec of rename, the state of checkpoint_path
+        # is atomic, i.e. it will either be modified or not modified, but not in
+        # # between, during a system crash (i.e. preemtion)
+        os.replace(f"{model_full_path}_temp", model_full_path)
+
+        save_data(vars(FLAGS), f"{full_path}_flags")
+
+        if optimizer is not None:
+            save_data(optimizer.state_dict(), f"{full_path}_optimizer")
+        if scheduler is not None:
+            save_data(scheduler.state_dict(), f"{full_path}_scheduler")
+        if sampler is not None and dataloader_iter is not None:
+            save_data(sampler.state_dict(dataloader_iter), f"{full_path}_sampler")
+        if rng is not None:
+            save_data(rng, f"{full_path}_rng")
+
+    # All processes should wait and join here before function exit.
+    dist.barrier()
 
 
-def load_model(model: nn.Module, input_dir: str, rank: int) -> nn.Module:
-    """Load the sharded model's weights.
+def load_model(model: torch.nn.Module, input_dir: str, weights_name: str) -> None:
+    """Load the model's weights. Only the PEFT weights.
 
     Args:
     ----
-        model: The sharded model.
+        model: The model.
         input_dir: The checkpointing directory.
-        rank: The worker's rank.
-
-    Returns:
-    -------
-        The loaded model.
     """
-    # weights_name = f"model_rank{rank}.bin"
-    weights_name = "model.bin"
+    # configure map_location properly
+    # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+    # ddp_model.load_state_dict(torch.load(CHECKPOINT_PATH, map_location=map_location))
     input_model_file = os.path.join(input_dir, weights_name)
-    cfg = LocalStateDictConfig(offload_to_cpu=True)
-    with FSDP.state_dict_type(model, StateDictType.LOCAL_STATE_DICT, cfg):
-        print(f"Loading model from {input_model_file}")
-        model = PeftModel.from_pretrained(model, input_model_file)
-        print(f"Model loaded from {input_model_file}")
-        return model
-
-
-def save_consolidated_model(
-    model: nn.Module,
-    save_dir: str,
-    rank: int,
-) -> None:
-    """Save the sharded model's parameters consolidated under a single file.
-
-    Args:
-    ----
-        model: The sharded model.
-        save_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    save_path = os.path.join(save_dir, "model.bin")
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
-        if rank == 0:
-            model.save_pretrained(save_path)
-
-
-def save_optimizer(
-    optimizer: Optimizer,
-    model: nn.Module,
-    output_dir: str,
-    rank: int,
-) -> None:
-    """Save the optimizer states.
-
-    Args:
-    ----
-        optimizer: The sharded optimizer.
-        model: The sharded model.
-        output_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    opt_name = f"optimizer_rank{rank}.bin"
-    output_optimizer_file = os.path.join(output_dir, opt_name)
-    opt_cfg = LocalOptimStateDictConfig(offload_to_cpu=True)
-    with FSDP.state_dict_type(
-        model,
-        StateDictType.LOCAL_STATE_DICT,
-        optim_state_dict_config=opt_cfg,
-    ):
-        opt_state = FSDP.optim_state_dict(model, optimizer)
-        print(f"Saving optimizer state to {output_optimizer_file}")
-        torch.save(opt_state, output_optimizer_file)
-        print(f"Optimizer state saved to {output_optimizer_file}")
-
-
-def load_optimizer(
-    optimizer: Optimizer,
-    model: nn.Module,
-    input_dir: str,
-    rank: int,
-) -> None:
-    """Load the optimizer states.
-
-    Args:
-    ----
-        optimizer: The sharded optimizer.
-        model: The sharded model.
-        input_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    opt_name = f"optimizer_rank{rank}.bin"
-    input_optimizer_file = os.path.join(input_dir, opt_name)
-    opt_cfg = LocalOptimStateDictConfig(offload_to_cpu=True)
-    model_cfg = LocalStateDictConfig(offload_to_cpu=True)
-    with FSDP.state_dict_type(
-        model,
-        StateDictType.LOCAL_STATE_DICT,
-        model_cfg,
-        opt_cfg,
-    ):
-        print(f"Loading optimizer state from {input_optimizer_file}")
-        opt_state = torch.load(input_optimizer_file)
-        opt_state = FSDP.optim_state_dict_to_load(opt_state, model, optimizer)
-        optimizer.load_state_dict(opt_state)
-        print(f"Optimizer state loaded from {input_optimizer_file}")
-
-
-def save_scheduler(
-    scheduler: LRScheduler,
-    output_dir: str,
-    rank: int,
-) -> None:
-    """Save scheduler states.
-
-    Args:
-    ----
-        scheduler: The LR scheduler.
-        output_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    sched_name = f"scheduler_rank{rank}.bin"
-    output_scheduler_file = os.path.join(output_dir, sched_name)
-    print(f"Saving scheduler state to {output_scheduler_file}")
-    state_dict = scheduler.state_dict()
-    torch.save(state_dict, output_scheduler_file)
-    print(f"Scheduler state saved to {output_scheduler_file}")
-
-
-def load_scheduler(
-    scheduler: LRScheduler,
-    input_dir: str,
-    rank: int,
-) -> None:
-    """Load scheduler states.
-
-    Args:
-    ----
-        scheduler: The LR scheduler.
-        input_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    sched_name = f"scheduler_rank{rank}.bin"
-    input_scheduler_file = os.path.join(input_dir, sched_name)
-    print(f"Loading scheduler state from {input_scheduler_file}")
-    state_dict = torch.load(input_scheduler_file)
-    scheduler.load_state_dict(state_dict)
-    print(f"Scheduler state loaded from {input_scheduler_file}")
+    print(f"Loading model from {input_model_file}")
+    PeftModel.from_pretrained(model, input_model_file)
+    print(f"Model loaded from {input_model_file}")
