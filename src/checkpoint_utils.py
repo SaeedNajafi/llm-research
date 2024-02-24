@@ -16,7 +16,7 @@ flags.DEFINE_string("model_path", "/tmp/", "main directory to save or load the m
 
 def save_data(data: Any, path: str) -> None:
     """Save the object to the file."""
-    logging.DEBUG(f"Saving to {path}")
+    logging.INFO(f"(rank_{dist.get_rank()}) - Saving to {path}")
     torch.save(data, f"{path}_temp")
     os.replace(f"{path}_temp", path)
 
@@ -46,11 +46,11 @@ def save_state(
         full_path = os.path.join(m_path, checkpoint_name)
 
         model_full_path = f"{full_path}_model"
-        logging.DEBUG(f"Saving model to {model_full_path}")
+        logging.INFO(f"(rank_{dist.get_rank()}) - Saving model to {model_full_path}")
         # This will call the PEFTmodel save.
         model.save_pretrained(f"{model_full_path}_temp")
 
-        # according to the GNU spec of rename, the state of checkpoint_path
+        # according to the GNU spec of rename, the state of path
         # is atomic, i.e. it will either be modified or not modified, but not in
         # # between, during a system crash (i.e. preemtion)
         os.replace(f"{model_full_path}_temp", model_full_path)
@@ -70,18 +70,42 @@ def save_state(
     dist.barrier()
 
 
-def load_model(model: torch.nn.Module, input_dir: str, weights_name: str) -> None:
-    """Load the model's weights. Only the PEFT weights.
+def load_data(model_object: Any, path: str, device_id: int) -> None:
+    """Load the state dict into the model_object."""
+    logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {path}")
+    model_object.load_state_dict(torch.load(path, map_location=lambda storage, loc: storage.cuda(device_id)))
 
-    Args:
-    ----
-        model: The model.
-        input_dir: The checkpointing directory.
-    """
-    # configure map_location properly
-    # map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
-    # ddp_model.load_state_dict(torch.load(CHECKPOINT_PATH, map_location=map_location))
-    input_model_file = os.path.join(input_dir, weights_name)
-    print(f"Loading model from {input_model_file}")
-    PeftModel.from_pretrained(model, input_model_file)
-    print(f"Model loaded from {input_model_file}")
+
+def load_state(
+    model: torch.nn.Module,
+    checkpoint_name: str,
+    device_id: int,
+    optimizer: Optional[Optimizer] = None,
+    scheduler: Optional[LRScheduler] = None,
+    sampler: Optional[Sampler] = None,
+    rng: Optional[torch.Tensor] = None,
+    model_path: Optional[str] = None,
+) -> None:
+    """Load the model and training state."""
+    m_path = FLAGS.model_path
+    if model_path is not None:
+        m_path = model_path
+
+    full_path = os.path.join(m_path, checkpoint_name)
+
+    logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {full_path}_model")
+    PeftModel.from_pretrained(model, f"{full_path}_model").to(device_id)
+
+    if optimizer is not None:
+        load_data(optimizer, f"{full_path}_optimizer", device_id)
+
+    if scheduler is not None:
+        load_data(scheduler, f"{full_path}_scheduler", device_id)
+
+    if sampler is not None:
+        load_data(sampler, f"{full_path}_sampler", device_id)
+
+    if rng is not None:
+        logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {full_path}_sampler")
+        rng = torch.load("{full_path}_rng")
+        torch.random.set_rng_state(rng)
