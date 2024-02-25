@@ -53,7 +53,8 @@ function install_package () {
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && python3 -m pip install --no-cache-dir ninja
 		MAX_JOBS=7 pip3 install --no-cache-dir flash-attn --no-build-isolation
-  elif [ "$OS" = "colab" ]; then
+
+  	elif [ "$OS" = "colab" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
 		pip3 install --no-cache-dir tensorflow tensorboard
 		export CUDA_HOME=/usr
@@ -61,9 +62,8 @@ function install_package () {
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
-        pip3 install -U "transformers==4.38.1" --upgrade
-   fi
-
+   	fi
+   	pip3 install -U "transformers==4.38.1" --upgrade
 }
 
 install_python
