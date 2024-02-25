@@ -28,7 +28,6 @@ def save_state(
     scheduler: Optional[LRScheduler] = None,
     sampler: Optional[Sampler] = None,
     dataloader_iter: Optional[Iterator] = None,
-    rng: Optional[torch.Tensor] = None,
     model_path: Optional[str] = None,
 ) -> None:
     """Save the modules to the model_path for the specified checkpoint name.
@@ -63,8 +62,9 @@ def save_state(
             save_data(scheduler.state_dict(), f"{full_path}_scheduler")
         if sampler is not None and dataloader_iter is not None:
             save_data(sampler.state_dict(dataloader_iter), f"{full_path}_sampler")
-        if rng is not None:
-            save_data(rng, f"{full_path}_rng")
+
+        rng = torch.random.get_rng_state()
+        save_data(rng, f"{full_path}_rng")
 
     # All processes should wait and join here before function exit.
     dist.barrier()
@@ -83,7 +83,6 @@ def load_state(
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRScheduler] = None,
     sampler: Optional[Sampler] = None,
-    rng: Optional[torch.Tensor] = None,
     model_path: Optional[str] = None,
 ) -> None:
     """Load the model and training state."""
@@ -105,7 +104,6 @@ def load_state(
     if sampler is not None:
         load_data(sampler, f"{full_path}_sampler", device_id)
 
-    if rng is not None:
-        logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {full_path}_sampler")
-        rng = torch.load("{full_path}_rng")
-        torch.random.set_rng_state(rng)
+    logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {full_path}_rng")
+    rng = torch.load("{full_path}_rng")
+    torch.random.set_rng_state(rng)
