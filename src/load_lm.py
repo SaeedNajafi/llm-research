@@ -1,4 +1,4 @@
-"""Load Gemma with parameter efficiency."""
+"""Load LM with parameter efficiency."""
 
 from typing import Any, Dict, Optional, Tuple
 
@@ -17,7 +17,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("pretrained_model", "google/gemma-7b-it", "initial pre-trained model to use as backbone LM.")
+flags.DEFINE_string("pretrained_model", "/model-weights/Llama-2-7b-chat-hf", "initial pre-trained model to use as backbone LM.")
 
 flags.DEFINE_integer("maximum_sequence_length", 1024, "The maximum sequence length.")
 flags.DEFINE_integer("r", 16, "rank hyper-parameter for lora.")
@@ -27,7 +27,7 @@ flags.DEFINE_integer("prompt_length", 25, "length of the prompts in the input se
 flags.DEFINE_string(
     "prompt_tuning_init_text", "Classify the text for me.", "What text to use to initialize the soft prompt embedding."
 )
-# Make sure we have some tokens defined for the gemma, if not defined in the model.
+# Make sure we have some tokens defined for the LM, if not defined in the model.
 _EXTRA_TOKENS = {
     "pad_token": "<pad>",
     "mask_token": "<mask>",
