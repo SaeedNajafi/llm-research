@@ -14,13 +14,12 @@ from datasets import ClassLabel, load_dataset
 from huggingface_hub import notebook_login
 from IPython.display import HTML, display
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, Trainer, TrainingArguments, set_seed
+from transformers import Trainer, TrainingArguments
 
-from src.load_gemma import load_peft_model_and_tokenizer
+from src.load_lm import load_peft_model_and_tokenizer
 from src.model_utils import set_random_seed
 
 FLAGS = flags.FLAGS
-flags.DEFINE_integer("seed", 42, "the seed number")
 
 
 def setup() -> None:

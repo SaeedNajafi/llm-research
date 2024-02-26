@@ -1,9 +1,21 @@
+import gc
 import os
 import random
 
 import numpy
 import tensorflow as tf
 import torch
+from absl import flags
+
+FLAGS = flags.FLAGS
+flags.DEFINE_integer("seed", 42, "the seed number")
+
+
+def clear_cache() -> None:
+    """Clean unused GPU Cache!"""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
 
 
 def set_random_seed(seed: int) -> None:

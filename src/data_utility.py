@@ -131,24 +131,25 @@ def white_space_fix(text: str) -> str:
 def return_gen_instruction() -> Tuple[str, str]:
     """Return the instruction type for generative QA tasks."""
     instruction = ""
+    # these are llama 2 chat format.
     if "_squad_" in FLAGS.instruction_type:
         instruction = "In this task, you are given a context and question. \
             Provide a short phrase as the answer for the given question using only the information from the context. \
-            If you do not have the complete information, generate no_answer in the output. \
+            If you do not have the complete information, generate 'no_answer' in the output. \
             Do not repeat the question in the output."
-        template = "<s> [INST] {instruction} {input_text} [/INST] "
+        template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
     elif "_race_" in FLAGS.instruction_type:
         instruction = "In this task, you are given a context. \
             Provide a short phrase as the answer for the given question using only the information from the context. \
-            If you do not have the complete information, generate no_answer in the output. \
+            If you do not have the complete information, generate 'no_answer' in the output. \
             Do not repeat the question in the output."
-        template = "<s> [INST] {instruction} {input_text} [/INST] "
+        template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
     elif "_narrativeqa_" in FLAGS.instruction_type:
         instruction = "In this task, you are given a context. \
             Provide a short phrase as the answer for the given question using only the information from the context. \
-            If you do not have the complete information, generate no_answer in the output. \
+            If you do not have the complete information, generate 'no_answer' in the output. \
             Do not repeat the question in the output."
-        template = "<s> [INST] {instruction} {input_text} [/INST] "
+        template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
     return white_space_fix(instruction), white_space_fix(template)
 
 
@@ -202,6 +203,8 @@ def gen_template_data(input_texts: List[str], output_texts: List[str]) -> GenRaw
     instruction, template = return_gen_instruction()
     input_sentences = [template.format(instruction=instruction, input_text=txt.removesuffix(" </s>")) for txt in input_texts]
     gold_outputs = [f"{txt}" for txt in output_texts]
+
+    # only paraphrase the context, and not the question.
     paraphrase_inputs = [white_space_fix(f"{txt.removesuffix(' </s>').split('Context:')[1]} </s>") for txt in input_texts]
     return GenRawData(
         inputs=input_sentences,
@@ -220,7 +223,11 @@ def read_gen_fewshot_file(file_path: str) -> GenRawData:
 
 class GenDataset(Dataset):
     """Subclass the pytorch's Dataset to build my own dataset for the text
-    classification task."""
+    tasks.
+
+    May need to return actual text instead of ids for better processing
+    in the code.
+    """
 
     def __init__(self, data: Dict[str, Any]) -> None:
         """Store the reference to the tokenized data."""
@@ -245,7 +252,7 @@ class GenDataset(Dataset):
 def gen_tokenize_data(
     rawdata: GenRawData, tokenizer: AutoTokenizer, para_tokenizer: Optional[AutoTokenizer] = None
 ) -> GenDataset:
-    """Tokenize data into a dataset."""
+    """Tokenize data into a dataset if needed."""
 
     data = {"raw_input_ids": rawdata.inputs, "raw_answer_ids": rawdata.gold_outputs}
 
@@ -263,7 +270,7 @@ def gen_tokenize_data(
     return GenDataset(data)
 
 
-def create_sentiment_dataset(
+def create_dataloader(
     tokenizer: AutoTokenizer,
     train_file_name: Optional[str] = None,
     dev_file_name: Optional[str] = None,
@@ -271,8 +278,7 @@ def create_sentiment_dataset(
     task_name: Optional[str] = None,
     para_tokenizer: Optional[AutoTokenizer] = None,
 ) -> DataLoader:
-    """Function to create the required hugging-face dataset to train the LM
-    models."""
+    """Function to create the required dataloader to train the LM models."""
     if task_name in ["squad", "narrativeqa", "race"]:
         if train_file_name is not None:
             gen_rawdata = read_gen_fewshot_file(train_file_name)

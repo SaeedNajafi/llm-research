@@ -64,6 +64,8 @@ function install_package () {
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
    	fi
    	pip3 install -U "transformers==4.38.1" --upgrade
+	pip3 install -U sentence-transformers
+
 }
 
 install_python
