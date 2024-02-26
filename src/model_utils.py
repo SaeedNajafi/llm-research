@@ -11,7 +11,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_integer("seed", 42, "the seed number")
 
 
-def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
+def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int) -> torch.Tensor:
     """Shift input ids one token to the right.
 
     source: https://github.com/huggingface/transformers/blob/main/src/transformers/models/bart/modeling_bart.py#L100

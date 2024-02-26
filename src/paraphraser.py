@@ -1,8 +1,4 @@
-"""This module will implement the paraphrase generator.
-
-This module implements different ideas for fine-tuning a backbone LM on
-some downstream NLP datasets.
-"""
+"""This module will implement the paraphrase generator."""
 
 from typing import Dict, List
 
@@ -12,6 +8,7 @@ from bitsandbytes.optim.adamw import PagedAdamW8bit
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+from src.checkpoint_utils import model_load, model_save
 from src.model_utils import clear_cache, encoder_decoder_log_of_labels, set_random_seed
 
 FLAGS = flags.FLAGS
@@ -21,7 +18,7 @@ flags.DEFINE_float("paraphrase_learning_rate", 0.00001, "The learning rate used 
 flags.DEFINE_string("para_model_path", "/tmp/", "The main directory to save or load the paraphrase model from.")
 flags.DEFINE_string("para_checkpoint_name", "last", "The checkpoint name to load the paraphrase from.")
 flags.DEFINE_integer("no_repeat_ngram_size", 2, "Related to generation with beam search.")
-flags.DEFINE_integer("paraphrase_generation_max_length", 1024, "Maximum Length to use for paraphrase generation.")
+flags.DEFINE_integer("paraphrase_generation_max_length", 1024, "Maximum length to use for paraphrase generation.")
 flags.DEFINE_float("top_p", 0.99, "The top_p value used in nucleus sampling.")
 flags.DEFINE_float("repetition_penalty", 10.0, "The penalty for repeating sequences in the diverse beam search algorithm.")
 flags.DEFINE_float("diversity_penalty", 3.0, "The diversity penalty used in the diverse beam search algorithm.")
@@ -34,21 +31,22 @@ _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 class Paraphraser(torch.nn.Module):
     """Main class to load a paraphraser or train it."""
 
-    def __init__(self, seed: int, device: int, mode: str, fixed: bool = False) -> None:
-        super().__init__(seed, device)
+    def __init__(self, device: int, mode: str, fixed: bool = False) -> None:
+        super().__init__()
 
         set_random_seed(FLAGS.seed)
         self.device = f"cuda:{device}"
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME, device=self.device)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.fixed = fixed
 
         # for some subclasses, we will compute per token log probabilities.
         # pad tokens have index -100 in huggingface.
         # don't reduce loss (log likelihood), compute loss per token.
         self.loss_func = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
-        self.loss_func = self.loss_func.to(self.device)
 
+        self.optimizer = None
+        self.scheduler = None
         if not self.fixed and mode == "train":
             # to train the paraphraser, we update all of its parameters.
             self.optimizer = PagedAdamW8bit(self.model.parameters(), lr=FLAGS.paraphrase_learning_rate)
@@ -57,6 +55,32 @@ class Paraphraser(torch.nn.Module):
         elif not self.fixed and mode in ["test", "inference", "eval"]:
             # load from the given checkpoint.
             self.load_from_checkpoint(FLAGS.para_model_path, FLAGS.para_checkpoint_name)
+
+    def save_to_checkpoint(self, para_model_path: str, para_checkpoint_name: str) -> None:
+        """Save the model components to the disk."""
+        model_save(
+            model=self.model,
+            model_path=para_model_path,
+            checkpoint_name=f"_paraphraser_{para_checkpoint_name}",
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+        )
+
+    def load_from_checkpoint(self, para_model_path: str, para_checkpoint_name: str) -> None:
+        """Load the model components from the disk."""
+        model_load(
+            model=self.model,
+            model_path=para_model_path,
+            checkpoint_name=f"_paraphraser_{para_checkpoint_name}",
+            peft_load=False,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+        )
+
+    def to_gpu(self) -> None:
+        """Move the required modules to the gpu on the given device."""
+        self.model.to(self.device)
+        self.loss_func.to(self.device)
 
     def predict_mode_on(self) -> None:
         """For each iteration of prediction over batch, clear gpu cache, turn
