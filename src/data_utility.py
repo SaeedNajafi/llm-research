@@ -9,16 +9,18 @@ with other components (optimizer, model, etc.)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import pandas as pd
 import torch
 import torch.distributed as dist
 from absl import flags
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import _BaseDataLoaderIter
 from torch.utils.data.distributed import DistributedSampler
 from transformers import AutoTokenizer
+
+from src.general_utils import DictDataset, white_space_fix
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("train_batch_size", 16, "The batch size used for training.")
@@ -123,11 +125,6 @@ class GenRawData:
     paraphrase_inputs: List[str]
 
 
-def white_space_fix(text: str) -> str:
-    """Remove extra spaces in text."""
-    return " ".join(text.split())
-
-
 def return_gen_instruction() -> Tuple[str, str]:
     """Return the instruction type for generative QA tasks."""
     instruction = ""
@@ -221,37 +218,9 @@ def read_gen_fewshot_file(file_path: str) -> GenRawData:
     return gen_template_data(input_texts, output_texts)
 
 
-class GenDataset(Dataset):
-    """Subclass the pytorch's Dataset to build my own dataset for the text
-    tasks.
-
-    May need to return actual text instead of ids for better processing
-    in the code.
-    """
-
-    def __init__(self, data: Dict[str, Any]) -> None:
-        """Store the reference to the tokenized data."""
-        self.data = data
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Return the elements for example index 'idx' as a dictionary with
-        tensor values."""
-        ret = {}
-        for key, val in self.data.items():
-            if isinstance(val[idx], str):
-                ret[key] = val[idx]
-            else:
-                ret[key] = torch.tensor(val[idx])
-        return ret
-
-    def __len__(self) -> int:
-        """Return the length of the data."""
-        return len(self.data["raw_input_ids"])
-
-
 def gen_tokenize_data(
     rawdata: GenRawData, tokenizer: AutoTokenizer, para_tokenizer: Optional[AutoTokenizer] = None
-) -> GenDataset:
+) -> DictDataset:
     """Tokenize data into a dataset if needed."""
 
     data = {"raw_input_ids": rawdata.inputs, "raw_answer_ids": rawdata.gold_outputs}
@@ -267,7 +236,7 @@ def gen_tokenize_data(
         data["para_input_ids"] = para_input_encodings.input_ids
         data["para_attention_mask"] = para_input_encodings.attention_mask
 
-    return GenDataset(data)
+    return DictDataset(data)
 
 
 def create_dataloader(
