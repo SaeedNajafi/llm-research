@@ -118,7 +118,7 @@ def mlm_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: tor
     log_p = log_p.view(batch_size, sequence_length)
 
     # non-masked tokens have index -100 in huggingface.
-    good_log_p = log_p.masked_fill_(labels == -100, 0.0)
+    good_log_p = log_p.masked_fill(labels == -100, 0.0)
 
     # good_log_p now has the log probability of the output
     # sequence tokens corresponding to the labels at the [MASK] location.
