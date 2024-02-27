@@ -10,7 +10,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from src.checkpoint_utils import model_load, model_save
 from src.general_utils import DictDataset, white_space_fix
-from src.model_utils import clear_cache, encoder_decoder_log_of_labels, optimizer_to, set_random_seed
+from src.model_utils import clear_cache, encoder_decoder_log_of_labels, mlm_log_of_labels, optimizer_to, set_random_seed
 
 FLAGS = flags.FLAGS
 
@@ -139,7 +139,7 @@ class Paraphraser(torch.nn.Module):
 
     def generate_paraphrases(
         self, batch: torch.utils.data.Dataset, num_return_seq: int, decoding_technique: str, temperature: float = 1.0
-    ) -> List[str]:
+    ) -> Tuple[List[str], torch.Tensor]:
         """The main prediction loop to generate paraphrases."""
         self.predict_mode_on()
         loaded_batch = self.data_to_gpu(batch, keys=["para_input_ids", "para_attention_mask"])
@@ -155,6 +155,7 @@ class Paraphraser(torch.nn.Module):
                 max_length=FLAGS.paraphrase_generation_max_length,
                 num_return_sequences=num_return_seq,
                 output_scores=True,
+                output_logits=True,
                 return_dict_in_generate=True,
                 use_cache=True,
                 repetition_penalty=FLAGS.repetition_penalty,
@@ -173,6 +174,7 @@ class Paraphraser(torch.nn.Module):
                 max_length=FLAGS.paraphrase_generation_max_length,
                 num_return_sequences=num_return_seq,
                 output_scores=True,
+                output_logits=True,
                 return_dict_in_generate=True,
                 use_cache=True,
             )
@@ -181,7 +183,13 @@ class Paraphraser(torch.nn.Module):
         # all special tokens will be removed.
         predictions_str = self.tokenizer.batch_decode(selected_samples, skip_special_tokens=True)
         predictions_str = [pred.lstrip('"').lstrip("'").rstrip("'").rstrip('"').strip() for pred in predictions_str]
-        return predictions_str
+
+        logits_list = list(predictions_output.logits)
+        logits = torch.stack(logits_list, dim=1)
+        labels_to_consider = selected_samples.masked_fill_(selected_samples == self.tokenizer.pad_token_id, -100)
+        final_log_ps = mlm_log_of_labels(logits=logits, labels=labels_to_consider, loss_func=self.loss_func)
+
+        return predictions_str, final_log_ps
 
     def paraphrase_forward_pass(self, batch: torch.utils.data.Dataset, train: bool = False) -> torch.Tensor:
         """Run a forward computation over the batch, compute the log
