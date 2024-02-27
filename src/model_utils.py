@@ -100,6 +100,31 @@ def encoder_decoder_log_of_labels(
     return torch.sum(good_log_p, dim=1).squeeze()
 
 
+def mlm_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+    """Compute the actual log of labels given pre-computed logits.
+
+    This function is also useful for both Roberta model and getting
+    generation logits for sampling methods.
+    """
+
+    log_p = -loss_func(
+        logits.view(-1, logits.size(-1)),
+        labels.view(-1),
+    )
+
+    batch_size, sequence_length, vocab_size = logits.size()
+
+    # compute per-token log probability in a sequence.
+    log_p = log_p.view(batch_size, sequence_length)
+
+    # non-masked tokens have index -100 in huggingface.
+    good_log_p = log_p.masked_fill_(labels == -100, 0.0)
+
+    # good_log_p now has the log probability of the output
+    # sequence tokens corresponding to the labels at the [MASK] location.
+    return torch.sum(good_log_p, dim=1)
+
+
 def set_random_seed(seed: int) -> None:
     """Set the random seed, which initializes the random number generator.
 
