@@ -11,6 +11,11 @@ FLAGS = flags.FLAGS
 flags.DEFINE_integer("seed", 42, "the seed number")
 
 
+def white_space_fix(text: str) -> str:
+    """Remove extra spaces in text."""
+    return " ".join(text.split())
+
+
 def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int) -> torch.Tensor:
     """Shift input ids one token to the right.
 
@@ -34,6 +39,22 @@ def clear_cache() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
+
+
+def optimizer_to(optim: torch.optim.Optimizer, device: str) -> None:
+    """Move the optimizer to a specific device."""
+    for param in optim.state.values():
+        # Not sure there are any global tensors in the state dict
+        if isinstance(param, torch.Tensor):
+            param.data = param.data.to(device)
+            if param._grad is not None:
+                param._grad.data = param._grad.data.to(device)
+        elif isinstance(param, dict):
+            for subparam in param.values():
+                if isinstance(subparam, torch.Tensor):
+                    subparam.data = subparam.data.to(device)
+                    if subparam._grad is not None:
+                        subparam._grad.data = subparam._grad.data.to(device)
 
 
 def encoder_decoder_log_of_labels(

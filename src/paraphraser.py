@@ -1,6 +1,6 @@
 """This module will implement the paraphrase generator."""
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import torch
 from absl import flags
@@ -9,7 +9,8 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from src.checkpoint_utils import model_load, model_save
-from src.model_utils import clear_cache, encoder_decoder_log_of_labels, set_random_seed
+from src.general_utils import DictDataset, white_space_fix
+from src.model_utils import clear_cache, encoder_decoder_log_of_labels, optimizer_to, set_random_seed
 
 FLAGS = flags.FLAGS
 
@@ -31,11 +32,11 @@ _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 class Paraphraser(torch.nn.Module):
     """Main class to load a paraphraser or train it."""
 
-    def __init__(self, device: int, mode: str, fixed: bool = False) -> None:
+    def __init__(self, device: str, mode: str, fixed: bool = False) -> None:
         super().__init__()
 
         set_random_seed(FLAGS.seed)
-        self.device = f"cuda:{device}"
+        self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.fixed = fixed
@@ -77,10 +78,45 @@ class Paraphraser(torch.nn.Module):
             scheduler=self.scheduler,
         )
 
-    def to_gpu(self) -> None:
+    def to(self) -> None:
         """Move the required modules to the gpu on the given device."""
         self.model.to(self.device)
         self.loss_func.to(self.device)
+        optimizer_to(self.optimizer, self.device)
+
+    def convert_to_ids(self, texts: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Required format for the paraphrase generator model.
+
+        Return ids and masks.
+        """
+        modified_texts = [white_space_fix(f"{text} </s>") for text in texts]
+        encodings = self.tokenizer(
+            modified_texts,
+            truncation=True,
+            padding="max_length",
+            max_length=FLAGS.paraphrase_generation_max_length,
+            add_special_tokens=False,
+        )
+        return encodings.input_ids, encodings.attention_mask
+
+    def prepare_text_for_generation(self, texts: List[str]) -> torch.utils.data.Dataset:
+        """Convert texts to ids and return the dataset required for generation
+        only."""
+        ids, mask = self.convert_to_ids(texts)
+        return DictDataset(data={"para_input_ids": ids, "para_attention_mask": mask})
+
+    def prepare_text_for_training(self, texts: List[str], output_texts: List[str]) -> torch.utils.data.Dataset:
+        """Convert texts to ids and return the dataset required for
+        training."""
+        input_ids, input_mask = self.convert_to_ids(texts)
+        output_ids, output_mask = self.convert_to_ids(output_texts)
+        data = {
+            "para_input_ids": input_ids,
+            "para_attention_mask": input_mask,
+            "para_labels": output_ids,
+            "para_target_attention_mask": output_mask,
+        }
+        return DictDataset(data=data)
 
     def predict_mode_on(self) -> None:
         """For each iteration of prediction over batch, clear gpu cache, turn
@@ -96,9 +132,9 @@ class Paraphraser(torch.nn.Module):
         # turn on training mode which enables dropout.
         self.model.train()
 
-    def move_to_gpu(self, batch: torch.utils.data.Dataset, keys: List[str]) -> Dict[str, torch.Tensor]:
-        """If gpu flag is set, move the batch tensors specified by keys into
-        the gpu and return a dictionary to access the gpu tensors."""
+    def data_to_gpu(self, batch: torch.utils.data.Dataset, keys: List[str]) -> Dict[str, torch.Tensor]:
+        """Move the batch tensors specified by keys into the gpu and return a
+        dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
 
     def generate_paraphrases(
@@ -106,7 +142,7 @@ class Paraphraser(torch.nn.Module):
     ) -> List[str]:
         """The main prediction loop to generate paraphrases."""
         self.predict_mode_on()
-        loaded_batch = self.move_to_gpu(batch, keys=["para_input_ids", "para_attention_mask"])
+        loaded_batch = self.data_to_gpu(batch, keys=["para_input_ids", "para_attention_mask"])
 
         if decoding_technique == "diverse_beam_search":
             predictions_output = self.model.generate(
@@ -158,7 +194,7 @@ class Paraphraser(torch.nn.Module):
         else:
             self.predict_mode_on()
 
-        loaded_batch = self.move_to_gpu(
+        loaded_batch = self.data_to_gpu(
             batch, keys=["para_input_ids", "para_attention_mask", "para_target_attention_mask", "para_labels"]
         )
         # keep an internal link to the loaded batch on gpu or cpu.
