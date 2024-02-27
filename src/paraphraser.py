@@ -99,13 +99,13 @@ class Paraphraser(torch.nn.Module):
         )
         return encodings.input_ids, encodings.attention_mask
 
-    def prepare_text_for_generation(self, texts: List[str]) -> torch.utils.data.Dataset:
+    def prepare_text_for_generation(self, texts: List[str]) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for generation
         only."""
         ids, mask = self.convert_to_ids(texts)
-        return DictDataset(data={"para_input_ids": ids, "para_attention_mask": mask})
+        return {"para_input_ids": ids, "para_attention_mask": mask}
 
-    def prepare_text_for_training(self, texts: List[str], output_texts: List[str]) -> torch.utils.data.Dataset:
+    def prepare_text_for_training(self, texts: List[str], output_texts: List[str]) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for
         training."""
         input_ids, input_mask = self.convert_to_ids(texts)
@@ -116,7 +116,7 @@ class Paraphraser(torch.nn.Module):
             "para_labels": output_ids,
             "para_target_attention_mask": output_mask,
         }
-        return DictDataset(data=data)
+        return data
 
     def predict_mode_on(self) -> None:
         """For each iteration of prediction over batch, clear gpu cache, turn
@@ -234,8 +234,8 @@ class Paraphraser(torch.nn.Module):
 def example_test_train_loop(model: Paraphraser) -> None:
     """Do a complete test of the model."""
     text = ["Today seems to be a rainy day in Toronto, and I like it!", "I hate you bro."]
-    dataset = model.prepare_text_for_generation(text)
-    dataloader = DataLoader(dataset, batch_size=len(text), shuffle=False)
+    data = model.prepare_text_for_generation(text)
+    dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=False)
     for data in dataloader:
         logging.info(data)
 
@@ -251,8 +251,8 @@ def example_test_train_loop(model: Paraphraser) -> None:
 
     # Test the training loop.
     output_text = ["Today seems to be a rainy day in Toronto", "I hate you!"]
-    dataset = model.prepare_text_for_training(text, output_text)
-    dataloader = DataLoader(dataset, batch_size=len(text), shuffle=True)
+    data = model.prepare_text_for_training(text, output_text)
+    dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=True)
     epochs = 20
     for e in range(epochs):
         for data in dataloader:
