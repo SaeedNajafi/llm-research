@@ -65,6 +65,7 @@ function install_package () {
    	fi
    	pip3 install -U "transformers==4.38.1" --upgrade
 	pip3 install -U sentence-transformers
+	pip3 install git+https://github.com/huggingface/transformers
 
 }
 

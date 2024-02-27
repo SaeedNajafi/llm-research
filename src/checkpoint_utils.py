@@ -1,6 +1,7 @@
 import os
+import shutil
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -17,8 +18,10 @@ flags.DEFINE_string("model_path", "/tmp/", "main directory to save or load the m
 
 def save_data(data: Any, path: str) -> None:
     """Save the object to the file."""
-    logging.INFO(f"Saving to {path}")
+    logging.info(f"Saving to {path}")
     torch.save(data, f"{path}_temp")
+    if os.path.exists(path):
+        os.remove(path)
     os.replace(f"{path}_temp", path)
 
 
@@ -38,20 +41,24 @@ def model_save(
 
     full_path = os.path.join(model_path, checkpoint_name)
 
-    model_full_path = f"{full_path}_model"
-    logging.INFO(f"Saving model to {model_full_path}")
+    model_full_path = f"{full_path}_model.bin"
+    logging.info(f"Saving model to {model_full_path}")
     # This will call the PEFTmodel save.
     model.save_pretrained(f"{model_full_path}_temp")
 
     # According to the GNU spec of rename, the state of path
     # is atomic, i.e. it will either be modified or not modified, but not in
     # between, during a system crash (i.e. preemtion)
+    if os.path.exists(model_full_path):
+        shutil.rmtree(model_full_path)
+
     os.replace(f"{model_full_path}_temp", model_full_path)
 
     if optimizer is not None:
-        save_data(optimizer.state_dict(), f"{full_path}_optimizer")
+        save_data(optimizer.state_dict(), f"{full_path}_optimizer.bin")
+
     if scheduler is not None:
-        save_data(scheduler.state_dict(), f"{full_path}_scheduler")
+        save_data(scheduler, f"{full_path}_scheduler.bin")
 
 
 def save_state(
@@ -78,7 +85,7 @@ def save_state(
         full_path = os.path.join(m_path, checkpoint_name)
 
         model_full_path = f"{full_path}_model"
-        logging.INFO(f"(rank_{dist.get_rank()}) - Saving model to {model_full_path}")
+        logging.info(f"(rank_{dist.get_rank()}) - Saving model to {model_full_path}")
         # This will call the PEFTmodel save.
         model.save_pretrained(f"{model_full_path}_temp")
 
@@ -105,7 +112,7 @@ def save_state(
 
 def load_data(model_object: Any, path: str) -> None:
     """Load the state dict into the model_object."""
-    logging.INFO(f"Loading from {path}")
+    logging.info(f"Loading from {path}")
     model_object.load_state_dict(torch.load(path, map_location="cpu"))
 
 
@@ -116,21 +123,24 @@ def model_load(
     peft_load: bool,
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRScheduler] = None,
-) -> None:
+) -> Tuple[torch.nn.Module, Optional[Optimizer], Optional[LRScheduler]]:
     """Load the model and sub-components."""
     full_path = os.path.join(model_path, checkpoint_name)
 
+    logging.info(f"Loading from {full_path}_model")
     if peft_load:
-        logging.INFO(f"Loading from {full_path}_model")
-        PeftModel.from_pretrained(model, f"{full_path}_model")
+        model = PeftModel.from_pretrained(model, f"{full_path}_model.bin")
     else:
-        load_data(model, f"{full_path}_model")
+        model = model.from_pretrained(f"{full_path}_model.bin")
 
     if optimizer is not None:
-        load_data(optimizer, f"{full_path}_optimizer")
+        load_data(optimizer, f"{full_path}_optimizer.bin")
 
     if scheduler is not None:
-        load_data(scheduler, f"{full_path}_scheduler")
+        logging.info(f"Loading from {full_path}_scheduler.bin")
+        scheduler = torch.load(f"{full_path}_scheduler.bin", map_location="cpu")
+
+    return model, optimizer, scheduler
 
 
 def load_state(
@@ -148,7 +158,7 @@ def load_state(
 
     full_path = os.path.join(m_path, checkpoint_name)
 
-    logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {full_path}_model")
+    logging.info(f"(rank_{dist.get_rank()}) - Loading from {full_path}_model")
     PeftModel.from_pretrained(model, f"{full_path}_model")
 
     if optimizer is not None:
@@ -160,6 +170,6 @@ def load_state(
     if sampler is not None:
         load_data(sampler, f"{full_path}_sampler")
 
-    logging.INFO(f"(rank_{dist.get_rank()}) - Loading from {full_path}_rng")
+    logging.info(f"(rank_{dist.get_rank()}) - Loading from {full_path}_rng")
     rng = torch.load("{full_path}_rng")
     torch.random.set_rng_state(rng)
