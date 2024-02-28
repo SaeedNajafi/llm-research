@@ -1,5 +1,6 @@
 """This module will implement the paraphrase generator."""
 
+import time
 from typing import Any, Dict, List, Tuple
 
 import torch
@@ -18,7 +19,7 @@ FLAGS = flags.FLAGS
 
 
 flags.DEFINE_float("paraphrase_learning_rate", 0.00005, "The learning rate used to train the paraphrase model", lower_bound=0.0)
-flags.DEFINE_string("para_model_path", "/tmp/", "The main directory to save or load the paraphrase model from.")
+flags.DEFINE_string("para_model_path", "/tmp", "The main directory to save or load the paraphrase model from.")
 flags.DEFINE_string("para_checkpoint_name", "last", "The checkpoint name to load the paraphrase from.")
 flags.DEFINE_integer("no_repeat_ngram_size", 2, "Related to generation with beam search.")
 flags.DEFINE_integer("paraphrase_generation_max_length", 1024, "Maximum length to use for paraphrase generation.")
@@ -45,7 +46,7 @@ class Paraphraser(torch.nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.fixed = fixed
-        self.cache: LruCache = LruCache(capacity=FLAGS.paraphrase_cache_capacity, filename=f"{FLAGS.para_model_path}/cache.pkl")
+        self.cache: LruCache = LruCache(capacity=FLAGS.paraphrase_cache_capacity, filename=f"{FLAGS.para_model_path}/cache.bin")
 
         # for some subclasses, we will compute per token log probabilities.
         # pad tokens have index -100 in huggingface.
@@ -65,6 +66,8 @@ class Paraphraser(torch.nn.Module):
             optimizer=self.optimizer,
             scheduler=self.scheduler,
         )
+        # Save cache information.
+        self.cache.save()
 
     def load_from_checkpoint(self, para_model_path: str, para_checkpoint_name: str) -> None:
         """Load the model components from the disk."""
@@ -80,11 +83,15 @@ class Paraphraser(torch.nn.Module):
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+        self.cache.filename = f"{para_model_path}/cache.bin"
+        self.cache.load()
+
     def to_device(self) -> None:
         """Move the required modules to the gpu on the given device."""
         self.model.to(self.device)
         self.loss_func.to(self.device)
         optimizer_to(self.optimizer, self.device)
+        self.cache.load_to_device(self.device)
 
     def convert_to_ids(self, texts: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         """Required format for the paraphrase generator model.
@@ -243,7 +250,7 @@ class Paraphraser(torch.nn.Module):
                 # Insert into cache.
                 for missed_idx in missed_indices:
                     new_paraphrases = missed_paraphrases[missed_idx * num_return_seq : (missed_idx + 1) * num_return_seq]
-                    new_log_p = missed_log_ps[missed_idx]
+                    new_log_p = missed_log_ps[missed_idx * num_return_seq : (missed_idx + 1) * num_return_seq]
                     paraphrases_indices[missed_idx] = (new_paraphrases, new_log_p)
                     self.cache.insert(key=batch["input_texts"][missed_idx], value=paraphrases_indices[missed_idx])
 
@@ -251,7 +258,7 @@ class Paraphraser(torch.nn.Module):
             log_ps = []
             for idx in range(batch_size):
                 paraphrases.extend(paraphrases_indices[idx][0])
-                log_ps.append(paraphrases_indices[idx][1])
+                log_ps.extend(paraphrases_indices[idx][1])
 
             return paraphrases, torch.stack(log_ps, dim=0)
 
@@ -313,7 +320,7 @@ def example_test_train_loop(model: Paraphraser) -> None:
         logging.info(log_ps)
 
         logging.info("top_p testing.")
-        paraphrases, log_ps = model.generate_paraphrases(data, num_return_seq=2, decoding_technique="diverse_beam_search")
+        paraphrases, log_ps = model.generate_paraphrases(data, num_return_seq=2, decoding_technique="top_p")
         logging.info(paraphrases)
         logging.info(log_ps)
 
@@ -332,13 +339,28 @@ def example_test_train_loop(model: Paraphraser) -> None:
             model.optimizer.step()
             model.scheduler.step(e)
 
+    logging.info("Testing caching latency with paraphrases.")
+    start_time = time.time()
     for data in dataloader:
-        logging.info("top_p testing.")
+        logging.info("diverse beam search testing.")
         paraphrases, log_ps = model.generate_paraphrases(data, num_return_seq=2, decoding_technique="diverse_beam_search")
         logging.info(paraphrases)
         logging.info(log_ps)
+    end_time = time.time()
+    logging.info(f"Time took without cache: {end_time-start_time}")
 
-    logging.info(model.scheduler.get_last_lr())
+    start_time = time.time()
+    for data in dataloader:
+        logging.info("diverse beam search testing.")
+        paraphrases, log_ps = model.generate_paraphrases(
+            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=True
+        )
+        logging.info(paraphrases)
+        logging.info(log_ps)
+    end_time = time.time()
+    logging.info(f"Time took while cache building: {end_time-start_time}")
+
+    logging.info(f"last_lr before saving: {model.scheduler.get_last_lr()}")
     model.save_to_checkpoint("/tmp", "testing_stage")
 
     # Create a different model and load it.
@@ -351,7 +373,7 @@ def example_test_train_loop(model: Paraphraser) -> None:
 
     for data in dataloader:
         logging.info("top_p testing.")
-        paraphrases, log_ps = new_model.generate_paraphrases(data, num_return_seq=2, decoding_technique="diverse_beam_search")
+        paraphrases, log_ps = new_model.generate_paraphrases(data, num_return_seq=2, decoding_technique="top_p")
         logging.info(paraphrases)
         logging.info(log_ps)
 
@@ -373,6 +395,31 @@ def example_test_train_loop(model: Paraphraser) -> None:
             new_model.scheduler.step(e + epochs)
 
     logging.info("Testing caching with paraphrases.")
+    dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=False)
+    start_time = time.time()
+    for data in dataloader:
+        logging.info("diverse_beam_search testing.")
+        cached_paraphrases, cached_log_ps = new_model.generate_paraphrases(
+            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=True
+        )
+        logging.info(cached_paraphrases)
+        logging.info(cached_log_ps)
+    end_time = time.time()
+    logging.info(f"Time took after cache: {end_time-start_time}")
+
+    start_time = time.time()
+    for data in dataloader:
+        logging.info("diverse_beam_search testing.")
+        paraphrases, log_ps = new_model.generate_paraphrases(
+            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=False
+        )
+        logging.info(paraphrases)
+        logging.info(log_ps)
+    end_time = time.time()
+    logging.info(f"Time took without cache: {end_time-start_time}")
+
+    assert paraphrases == cached_paraphrases
+    assert torch.all(log_ps == cached_log_ps)
 
 
 def main(argv: Any) -> None:
