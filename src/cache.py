@@ -39,8 +39,7 @@ class LruCache(Generic[T]):
         self.cache.clear()
 
     def save(self) -> None:
-        """Saves the in-memory cache contents as a CSV file with separate
-        columns for keys and values.
+        """Saves the in-memory cache contents pickle file.
 
         Raises:
             ValueError: If filename is not set.
@@ -54,7 +53,7 @@ class LruCache(Generic[T]):
         logging.info(f"Cache data saved to {self.filename}")
 
     def load(self) -> None:
-        """Loads the cache contents from a CSV file containing keys and values.
+        """Loads the cache contents from a pickle file.
 
         Raises:
             ValueError: If filename is not set.
@@ -80,15 +79,17 @@ def main(argv: Any) -> None:
     cache.insert(key="My third key", value=["value E", "value F"])
     cache.insert(key="My third key", value=["value G", "value H"])
 
-    print(cache.cache)
+    logging.info(cache.cache)
     cache.save()
 
     new_cache: LruCache = LruCache(capacity=2, filename="/tmp/my_cache.pkl")
     new_cache.load()
-    print(new_cache.cache)
-    print(new_cache.get("My third key"))
+    logging.info(new_cache.cache)
+    logging.info(new_cache.get("My third key"))
     assert new_cache.get("My third key") == ["value G", "value H"]
     assert new_cache.get("My second key") == ["value C", "value D"]
+    new_cache.clear()
+    cache.clear()
     del new_cache
     del cache
 
