@@ -229,7 +229,7 @@ class Paraphraser(torch.nn.Module):
                 else:
                     missed_indices.append(idx)
             if len(missed_indices) > 0:
-                missed_indices_tensor = torch.tensor(missed_indices)
+                missed_indices_tensor = torch.tensor(missed_indices, device=self.device)
                 missed_para_input_ids = torch.index_select(loaded_batch["para_input_ids"], 0, missed_indices_tensor)
                 missed_para_attention_mask = torch.index_select(loaded_batch["para_attention_mask"], 0, missed_indices_tensor)
                 missed_paraphrases, missed_log_ps = self.decode_paraphrases(
@@ -371,6 +371,8 @@ def example_test_train_loop(model: Paraphraser) -> None:
             logging.info(f"epoch_{e} loss_value:{loss.item()}")
             new_model.optimizer.step()
             new_model.scheduler.step(e + epochs)
+
+    logging.info("Testing caching with paraphrases.")
 
 
 def main(argv: Any) -> None:
