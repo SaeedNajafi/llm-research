@@ -1,9 +1,9 @@
 """LRU Cache implementation with save and load functionality to disk."""
 
-import pickle
 from collections import OrderedDict
 from typing import Any, Generic, Hashable, Optional, TypeVar
 
+import torch
 from absl import app, logging
 
 T = TypeVar("T")
@@ -46,10 +46,7 @@ class LruCache(Generic[T]):
         """
         if not self.filename:
             raise ValueError("Filename not set for saving.")
-
-        with open(self.filename, "wb") as fp:
-            pickle.dump(self.cache, fp)
-
+        torch.save(self.cache, self.filename)
         logging.info(f"Cache data saved to {self.filename}")
 
     def load(self) -> None:
@@ -62,10 +59,17 @@ class LruCache(Generic[T]):
         if not self.filename:
             raise ValueError("Filename not set for loading.")
         try:
-            with open(self.filename, "rb") as fp:
-                self.cache = pickle.load(fp)
+            self.cache = torch.load(self.filename, map_location="cpu")
         except FileNotFoundError:
             logging.info(f"File not found {self.filename}")
+        logging.info(f"Cache data loaded from {self.filename}")
+
+    def load_to_device(self, device: str) -> None:
+        """Regenerate the cache data and move all the tensors to the device."""
+        for key, value in self.cache.items():
+            paraphrases, log_ps = value
+            if isinstance(log_ps, torch.Tensor):
+                self.cache[key] = (paraphrases, log_ps.to(device))
 
 
 def main(argv: Any) -> None:
@@ -73,7 +77,7 @@ def main(argv: Any) -> None:
     del argv
 
     logging.info("Testing the in-memory cache!")
-    cache: LruCache = LruCache(capacity=2, filename="/tmp/my_cache.pkl")
+    cache: LruCache = LruCache(capacity=2, filename="/tmp/my_cache.bin")
     cache.insert(key="My first key", value=["value A", "value B"])
     cache.insert(key="My second key", value=["value C", "value D"])
     cache.insert(key="My third key", value=["value E", "value F"])
@@ -82,7 +86,7 @@ def main(argv: Any) -> None:
     logging.info(cache.cache)
     cache.save()
 
-    new_cache: LruCache = LruCache(capacity=2, filename="/tmp/my_cache.pkl")
+    new_cache: LruCache = LruCache(capacity=2, filename="/tmp/my_cache.bin")
     new_cache.load()
     logging.info(new_cache.cache)
     logging.info(new_cache.get("My third key"))
