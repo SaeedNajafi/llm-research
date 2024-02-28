@@ -149,7 +149,7 @@ class Paraphraser(torch.nn.Module):
         dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
 
-    def decode_paraphrases(
+    def decode_paraphrases_atomic(
         self,
         para_input_ids: torch.Tensor,
         para_attention_mask: torch.Tensor,
@@ -210,6 +210,55 @@ class Paraphraser(torch.nn.Module):
         actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
         # Average log probs per token (length normalization).
         return predictions_str, final_log_ps / actual_lens
+
+    def decode_paraphrases(
+        self,
+        para_input_ids: torch.Tensor,
+        para_attention_mask: torch.Tensor,
+        num_return_seq: int,
+        decoding_technique: str,
+        temperature: float = 1.0,
+    ) -> Tuple[List[str], torch.Tensor]:
+        """The main prediction loop to generate paraphrases."""
+        if decoding_technique in ["diverse_beam_search", "top_p"]:
+            return self.decode_paraphrases_atomic(
+                para_input_ids=para_input_ids,
+                para_attention_mask=para_attention_mask,
+                num_return_seq=num_return_seq,
+                decoding_technique=decoding_technique,
+                temperature=temperature,
+            )
+        elif decoding_technique == "mixed":
+            if num_return_seq == 1:
+                raise Exception("Mixed decoding requires num_return_seq > 1.")
+            beam_paraphrases, beam_log_ps = self.decode_paraphrases_atomic(
+                para_input_ids=para_input_ids,
+                para_attention_mask=para_attention_mask,
+                num_return_seq=num_return_seq,
+                decoding_technique="diverse_beam_search",
+                temperature=temperature,
+            )
+            top_p_paraphrases, top_p_log_ps = self.decode_paraphrases_atomic(
+                para_input_ids=para_input_ids,
+                para_attention_mask=para_attention_mask,
+                num_return_seq=num_return_seq,
+                decoding_technique="top_p",
+                temperature=temperature,
+            )
+            batch_size = len(beam_paraphrases) // num_return_seq
+
+            # the array to hold the mixed samples from beam-search and top-p sampling.
+            mixed_paraphrases = []
+            mixed_log_ps = []
+            for idx in range(batch_size):
+                top_p_arr = top_p_paraphrases[idx * num_return_seq : (idx + 1) * num_return_seq]
+                beam_arr = beam_paraphrases[idx * num_return_seq : (idx + 1) * num_return_seq]
+                mixed_paraphrases.extend(top_p_arr[: num_return_seq // 2])
+                mixed_paraphrases.extend(beam_arr[: num_return_seq // 2])
+                mixed_log_ps.extend(top_p_log_ps[: num_return_seq // 2])
+                mixed_log_ps.extend(beam_log_ps[: num_return_seq // 2])
+            return mixed_paraphrases, torch.stack(mixed_log_ps, dim=0)
+        return [], None
 
     def generate_paraphrases(
         self,

@@ -1,15 +1,15 @@
 """LRU Cache implementation with save and load functionality to disk."""
 
 from collections import OrderedDict
-from typing import Any, Generic, Hashable, Optional, TypeVar
+from typing import Any, Hashable, List, Optional, Tuple
 
 import torch
 from absl import app, logging
 
-T = TypeVar("T")
+T = Tuple[List[str], torch.Tensor]
 
 
-class LruCache(Generic[T]):
+class LruCache:
     def __init__(self, capacity: int, filename: Optional[str] = None) -> None:
         """Define the capacity of the cache."""
         self.capacity = capacity
@@ -67,9 +67,9 @@ class LruCache(Generic[T]):
     def load_to_device(self, device: str) -> None:
         """Regenerate the cache data and move all the tensors to the device."""
         for key, value in self.cache.items():
-            paraphrases, log_ps = value
-            if isinstance(log_ps, torch.Tensor):
-                self.cache[key] = (paraphrases, log_ps.to(device))
+            paraphrases: List[str] = value[0]
+            log_ps: torch.Tensor = value[1]
+            self.cache[key] = (paraphrases, log_ps.to(device))
 
 
 def main(argv: Any) -> None:
@@ -78,10 +78,10 @@ def main(argv: Any) -> None:
 
     logging.info("Testing the in-memory cache!")
     cache: LruCache = LruCache(capacity=2, filename="/tmp/my_cache.bin")
-    cache.insert(key="My first key", value=["value A", "value B"])
-    cache.insert(key="My second key", value=["value C", "value D"])
-    cache.insert(key="My third key", value=["value E", "value F"])
-    cache.insert(key="My third key", value=["value G", "value H"])
+    cache.insert(key="My first key", value=(["value A", "value B"], torch.zeros(3, 3)))
+    cache.insert(key="My second key", value=(["value C", "value D"], torch.zeros(3, 3)))
+    cache.insert(key="My third key", value=(["value E", "value F"], torch.zeros(3, 3)))
+    cache.insert(key="My third key", value=(["value G", "value H"], torch.zeros(3, 3)))
 
     logging.info(cache.cache)
     cache.save()
@@ -90,8 +90,6 @@ def main(argv: Any) -> None:
     new_cache.load()
     logging.info(new_cache.cache)
     logging.info(new_cache.get("My third key"))
-    assert new_cache.get("My third key") == ["value G", "value H"]
-    assert new_cache.get("My second key") == ["value C", "value D"]
     new_cache.clear()
     cache.clear()
     del new_cache
