@@ -9,6 +9,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+from src.cache import LruCache
 from src.checkpoint_utils import model_load, model_save
 from src.general_utils import DictDataset, white_space_fix
 from src.model_utils import clear_cache, encoder_decoder_log_of_labels, mlm_log_of_labels, optimizer_to, set_random_seed
@@ -25,7 +26,7 @@ flags.DEFINE_float("top_p", 0.99, "The top_p value used in nucleus sampling.")
 flags.DEFINE_float("repetition_penalty", 10.0, "The penalty for repeating sequences in the diverse beam search algorithm.")
 flags.DEFINE_float("diversity_penalty", 3.0, "The diversity penalty used in the diverse beam search algorithm.")
 flags.DEFINE_float("diverse_beam_temperature", 0.7, "The temperature value used in diverse beam search.")
-flags.DEFINE_integer("use_paraphrase_cache", 1, "Whether to use cache for the generated paraphrase samples.")
+flags.DEFINE_integer("paraphrase_cache_capacity", 100000, "The maximum capacity of the cache.")
 
 _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 
@@ -44,6 +45,7 @@ class Paraphraser(torch.nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.fixed = fixed
+        self.cache: LruCache = LruCache(capacity=FLAGS.paraphrase_cache_capacity, filename=f"{FLAGS.para_model_path}/cache.pkl")
 
         # for some subclasses, we will compute per token log probabilities.
         # pad tokens have index -100 in huggingface.
@@ -103,7 +105,8 @@ class Paraphraser(torch.nn.Module):
         """Convert texts to ids and return the dataset required for generation
         only."""
         ids, mask = self.convert_to_ids(texts)
-        return {"para_input_ids": ids, "para_attention_mask": mask}
+        data = {"para_input_ids": ids, "para_attention_mask": mask, "input_texts": texts}
+        return data
 
     def prepare_text_for_training(self, texts: List[str], output_texts: List[str]) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for
@@ -111,6 +114,8 @@ class Paraphraser(torch.nn.Module):
         input_ids, input_mask = self.convert_to_ids(texts)
         output_ids, output_mask = self.convert_to_ids(output_texts)
         data = {
+            "input_texts": texts,
+            "output_texts": output_texts,
             "para_input_ids": input_ids,
             "para_attention_mask": input_mask,
             "para_labels": output_ids,
@@ -137,17 +142,20 @@ class Paraphraser(torch.nn.Module):
         dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
 
-    def generate_paraphrases(
-        self, batch: torch.utils.data.Dataset, num_return_seq: int, decoding_technique: str, temperature: float = 1.0
+    def decode_paraphrases(
+        self,
+        para_input_ids: torch.Tensor,
+        para_attention_mask: torch.Tensor,
+        num_return_seq: int,
+        decoding_technique: str,
+        temperature: float = 1.0,
     ) -> Tuple[List[str], torch.Tensor]:
         """The main prediction loop to generate paraphrases."""
         self.predict_mode_on()
-        loaded_batch = self.data_to_device(batch, keys=["para_input_ids", "para_attention_mask"])
-
         if decoding_technique == "diverse_beam_search":
             predictions_output = self.model.generate(
-                input_ids=loaded_batch["para_input_ids"],
-                attention_mask=loaded_batch["para_attention_mask"],
+                input_ids=para_input_ids,
+                attention_mask=para_attention_mask,
                 do_sample=False,
                 no_repeat_ngram_size=FLAGS.no_repeat_ngram_size,
                 num_beams=num_return_seq,
@@ -166,8 +174,8 @@ class Paraphraser(torch.nn.Module):
 
         elif decoding_technique == "top_p":
             predictions_output = self.model.generate(
-                input_ids=loaded_batch["para_input_ids"],
-                attention_mask=loaded_batch["para_attention_mask"],
+                input_ids=para_input_ids,
+                attention_mask=para_attention_mask,
                 no_repeat_ngram_size=FLAGS.no_repeat_ngram_size,
                 do_sample=True,
                 top_p=FLAGS.top_p,
@@ -195,6 +203,66 @@ class Paraphraser(torch.nn.Module):
         actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
         # Average log probs per token (length normalization).
         return predictions_str, final_log_ps / actual_lens
+
+    def generate_paraphrases(
+        self,
+        batch: torch.utils.data.Dataset,
+        num_return_seq: int,
+        decoding_technique: str,
+        temperature: float = 1.0,
+        use_internal_cache: bool = False,
+    ) -> Tuple[List[str], torch.Tensor]:
+        """Generate paraphrases.
+
+        Use cache if found and if requested.
+        """
+        loaded_batch = self.data_to_device(batch, keys=["para_input_ids", "para_attention_mask"])
+        if use_internal_cache:
+            batch_size = batch["para_input_ids"].size()[0]
+            paraphrases_indices: Dict[int, Tuple[List[str], torch.Tensor]] = {}
+            missed_indices = []
+            for idx, para_input_text in enumerate(batch["input_texts"]):
+                value = self.cache.get(para_input_text)
+                if value is not None:
+                    # This is a hit.
+                    paraphrases_indices[idx] = value
+                else:
+                    missed_indices.append(idx)
+            if len(missed_indices) > 0:
+                missed_indices_tensor = torch.tensor(missed_indices)
+                missed_para_input_ids = torch.index_select(loaded_batch["para_input_ids"], 0, missed_indices_tensor)
+                missed_para_attention_mask = torch.index_select(loaded_batch["para_attention_mask"], 0, missed_indices_tensor)
+                missed_paraphrases, missed_log_ps = self.decode_paraphrases(
+                    para_input_ids=missed_para_input_ids,
+                    para_attention_mask=missed_para_attention_mask,
+                    num_return_seq=num_return_seq,
+                    decoding_technique=decoding_technique,
+                    temperature=temperature,
+                )
+
+                # Insert into cache.
+                for missed_idx in missed_indices:
+                    new_paraphrases = missed_paraphrases[missed_idx * num_return_seq : (missed_idx + 1) * num_return_seq]
+                    new_log_p = missed_log_ps[missed_idx]
+                    paraphrases_indices[missed_idx] = (new_paraphrases, new_log_p)
+                    self.cache.insert(key=batch["input_texts"][missed_idx], value=paraphrases_indices[missed_idx])
+
+            paraphrases = []
+            log_ps = []
+            for idx in range(batch_size):
+                paraphrases.extend(paraphrases_indices[idx][0])
+                log_ps.append(paraphrases_indices[idx][1])
+
+            return paraphrases, torch.stack(log_ps, dim=0)
+
+        else:
+            return self.decode_paraphrases(
+                para_input_ids=loaded_batch["para_input_ids"],
+                para_attention_mask=loaded_batch["para_attention_mask"],
+                num_return_seq=num_return_seq,
+                decoding_technique=decoding_technique,
+                temperature=temperature,
+            )
 
     def paraphrase_forward_pass(self, batch: torch.utils.data.Dataset, train: bool = False) -> torch.Tensor:
         """Run a forward computation over the batch, compute the log
