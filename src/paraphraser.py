@@ -245,6 +245,7 @@ class Paraphraser(torch.nn.Module):
                 decoding_technique="top_p",
                 temperature=temperature,
             )
+
             batch_size = len(beam_paraphrases) // num_return_seq
 
             # the array to hold the mixed samples from beam-search and top-p sampling.
@@ -253,10 +254,12 @@ class Paraphraser(torch.nn.Module):
             for idx in range(batch_size):
                 top_p_arr = top_p_paraphrases[idx * num_return_seq : (idx + 1) * num_return_seq]
                 beam_arr = beam_paraphrases[idx * num_return_seq : (idx + 1) * num_return_seq]
+                top_p_log_ps_arr = top_p_log_ps[idx * num_return_seq : (idx + 1) * num_return_seq]
+                beam_log_ps_arr = beam_log_ps[idx * num_return_seq : (idx + 1) * num_return_seq]
                 mixed_paraphrases.extend(top_p_arr[: num_return_seq // 2])
                 mixed_paraphrases.extend(beam_arr[: num_return_seq // 2])
-                mixed_log_ps.extend(top_p_log_ps[: num_return_seq // 2])
-                mixed_log_ps.extend(beam_log_ps[: num_return_seq // 2])
+                mixed_log_ps.extend(top_p_log_ps_arr[: num_return_seq // 2])
+                mixed_log_ps.extend(beam_log_ps_arr[: num_return_seq // 2])
             return mixed_paraphrases, torch.stack(mixed_log_ps, dim=0)
         return [], None
 
@@ -469,6 +472,28 @@ def example_test_train_loop(model: Paraphraser) -> None:
 
     assert paraphrases == cached_paraphrases
     assert torch.all(log_ps == cached_log_ps)
+
+    for data in dataloader:
+        logging.info("mixed testing.")
+        paraphrases, log_ps = new_model.generate_paraphrases(
+            data, num_return_seq=2, decoding_technique="mixed", use_internal_cache=False
+        )
+        logging.info(paraphrases)
+        logging.info(log_ps)
+
+        logging.info("top p testing.")
+        paraphrases, log_ps = new_model.generate_paraphrases(
+            data, num_return_seq=2, decoding_technique="top_p", use_internal_cache=False
+        )
+        logging.info(paraphrases)
+        logging.info(log_ps)
+
+        logging.info("diverse beam search testing.")
+        paraphrases, log_ps = new_model.generate_paraphrases(
+            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=False
+        )
+        logging.info(paraphrases)
+        logging.info(log_ps)
 
 
 def main(argv: Any) -> None:
