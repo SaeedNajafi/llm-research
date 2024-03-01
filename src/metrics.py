@@ -8,10 +8,10 @@ import torch
 from absl import flags
 from sentence_transformers import SentenceTransformer
 
-from src.model_utils import clear_cache, set_random_seed
+from src.model_utils import clear_cache
 
 FLAGS = flags.FLAGS
-flags.DEFINE_integer("metric_device_id", 3, "GPU device id per node to calculate the metric.")
+flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
 flags.DEFINE_integer("metric_batch_size", 16, "batch size used for the metric model.")
 
 
@@ -21,20 +21,16 @@ class QAMetricModel:
 
     model_id = "sentence-transformers/sentence-t5-xxl"
 
-    def __init__(self, device_id: int = 0, batch_size: int = 16) -> None:
+    def __init__(self, device: str = "cuda:0", batch_size: int = 16) -> None:
         """Save the gpu device and construct the model and cache it."""
-        self.old_random_seed = FLAGS.seed
-        self.old_rng = torch.random.get_rng_state()
-        # set a unique random seed for the metric model.
-        set_random_seed(len("QAMetricModel"))
-        self.device = f"cuda:{device_id}"
+        self.device = device
         self.batch_size = batch_size
         self.metric_model = SentenceTransformer(self.model_id, device=self.device).eval()
 
     def compute_metric(self, predictions: List[str], references: List[List[str]]) -> float:
         """Compute the metric for the given predictions and multiple
         references."""
-        average_score = torch.tensor(0.0)
+        average_score = torch.tensor(0.0, device=self.device)
         num_chunks = max(len(predictions) // self.batch_size, 1)
         for chunk_i in range(num_chunks):
             clear_cache()
@@ -115,7 +111,7 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
     """Compute the metric for the qa task."""
     global qa_metric_model
     if qa_metric_model is None:
-        qa_metric_model = QAMetricModel(device_id=FLAGS.metric_device_id, batch_size=FLAGS.metric_batch_size)
+        qa_metric_model = QAMetricModel(device=FLAGS.metric_device, batch_size=FLAGS.metric_batch_size)
 
     df = pd.read_csv(prediction_file, delimiter=",")
 
@@ -138,7 +134,4 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
             score = qa_metric_model.compute_metric(predictions, multiple_gold_answers)
             return_metrics[metric] = score
 
-    # Set back the random seed for the rest of models.
-    set_random_seed(FLAGS.seed)
-    torch.random.set_rng_state(qa_metric_model.old_rng)
     return return_metrics
