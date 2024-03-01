@@ -15,7 +15,6 @@ INSTALL_REQUIRES = [
     "matplotlib",
     "pandas",
     "scikit-learn",
-    "transformers",
     "bitsandbytes",
     "accelerate",
     "datasets",

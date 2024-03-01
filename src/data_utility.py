@@ -6,8 +6,6 @@ preemption of the jobs. Therefore, we save the dataloader status along
 with other components (optimizer, model, etc.)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 
@@ -18,14 +16,14 @@ from absl import flags
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import _BaseDataLoaderIter
 from torch.utils.data.distributed import DistributedSampler
-from transformers import AutoTokenizer
 
 from src.general_utils import DictDataset, white_space_fix
+from src.main_lm import MainLM
+from src.paraphraser import Paraphraser
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer("train_batch_size", 16, "The batch size used for training.")
 flags.DEFINE_integer("eval_batch_size", 2048, "The batch size used for inference on the test or validation data.")
-flags.DEFINE_integer("source_max_length", 128, "The maximum number of tokens consider in the input sequence.")
 flags.DEFINE_string("instruction_type", "qa", "The instruction type to format the input sentences.")
 
 
@@ -118,31 +116,20 @@ class DistributedSaveableSampler(DistributedSampler):
 
 @dataclass
 class GenRawData:
-    """Input/Outputs for generative raw data."""
+    """Inputs for generative tasks."""
 
     inputs: List[str]
-    gold_outputs: List[str]
+    outputs: List[str]
     paraphrase_inputs: List[str]
 
 
 def return_gen_instruction() -> Tuple[str, str]:
     """Return the instruction type for generative QA tasks."""
     instruction = ""
-    # these are llama 2 chat format.
-    if "_squad_" in FLAGS.instruction_type:
+    # These are llama 2 chat format.
+    inst_type = FLAGS.instruction_type
+    if ("_squad_" in inst_type) or ("_race_" in inst_type) or ("_narrativeqa_" in inst_type):
         instruction = "In this task, you are given a context and question. \
-            Provide a short phrase as the answer for the given question using only the information from the context. \
-            If you do not have the complete information, generate 'no_answer' in the output. \
-            Do not repeat the question in the output."
-        template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
-    elif "_race_" in FLAGS.instruction_type:
-        instruction = "In this task, you are given a context. \
-            Provide a short phrase as the answer for the given question using only the information from the context. \
-            If you do not have the complete information, generate 'no_answer' in the output. \
-            Do not repeat the question in the output."
-        template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
-    elif "_narrativeqa_" in FLAGS.instruction_type:
-        instruction = "In this task, you are given a context. \
             Provide a short phrase as the answer for the given question using only the information from the context. \
             If you do not have the complete information, generate 'no_answer' in the output. \
             Do not repeat the question in the output."
@@ -150,23 +137,9 @@ def return_gen_instruction() -> Tuple[str, str]:
     return white_space_fix(instruction), white_space_fix(template)
 
 
-def tokenize_samples(batch: torch.utils.data.Dataset, samples: List[str], tokenizer: AutoTokenizer) -> None:
-    samples = [white_space_fix(f"{sample} </s>") for sample in samples]
-    output_encodings = tokenizer(
-        samples,
-        truncation=True,
-        padding="max_length",
-        max_length=FLAGS.source_max_length,
-        add_special_tokens=False,
-    )
-    batch["para_target_attention_mask"] = torch.tensor(output_encodings.attention_mask)
-    batch["para_labels"] = torch.tensor(output_encodings.input_ids)
-
-
 def gen_augment_batch(
     batch: torch.utils.data.Dataset,
     paraphrases: List[str],
-    tokenizer: AutoTokenizer,
     num_return_seq: int,
 ) -> None:
     """Augment the batch with paraphrases for generative tasks."""
@@ -198,16 +171,16 @@ def gen_template_data(input_texts: List[str], output_texts: List[str]) -> GenRaw
     """Helper function to format the data for the models in the generative
     tasks."""
     instruction, template = return_gen_instruction()
-    input_sentences = [template.format(instruction=instruction, input_text=txt.removesuffix(" </s>")) for txt in input_texts]
-    gold_outputs = [f"{txt}" for txt in output_texts]
+    inputs = []
+    paraphrase_inputs = []
+    for input_text in input_texts:
+        input = template.format(instruction=instruction, input_text=input_text.removesuffix(" </s>"))
+        inputs.append(input)
+        # only paraphrase the context, and not the question.
+        paraphrase_input = white_space_fix(f"{input_text.removesuffix(' </s>').split('Context:')[1]}")
+        paraphrase_inputs.append(paraphrase_input)
 
-    # only paraphrase the context, and not the question.
-    paraphrase_inputs = [white_space_fix(f"{txt.removesuffix(' </s>').split('Context:')[1]} </s>") for txt in input_texts]
-    return GenRawData(
-        inputs=input_sentences,
-        gold_outputs=gold_outputs,
-        paraphrase_inputs=paraphrase_inputs,
-    )
+    return GenRawData(inputs=inputs, outputs=output_texts, paraphrase_inputs=paraphrase_inputs)
 
 
 def read_gen_fewshot_file(file_path: str) -> GenRawData:
@@ -218,34 +191,25 @@ def read_gen_fewshot_file(file_path: str) -> GenRawData:
     return gen_template_data(input_texts, output_texts)
 
 
-def gen_tokenize_data(
-    rawdata: GenRawData, tokenizer: AutoTokenizer, para_tokenizer: Optional[AutoTokenizer] = None
-) -> DictDataset:
+def gen_tokenize_data(rawdata: GenRawData, model: MainLM, paraphraser: Optional[Paraphraser] = None) -> DictDataset:
     """Tokenize data into a dataset if needed."""
 
-    data = {"raw_input_ids": rawdata.inputs, "raw_answer_ids": rawdata.gold_outputs}
+    data = model.prepare_text(rawdata.inputs, rawdata.outputs)
 
-    if para_tokenizer is not None:
-        para_input_encodings = para_tokenizer(
-            rawdata.paraphrase_inputs,
-            truncation=True,
-            padding="max_length",
-            max_length=FLAGS.source_max_length,
-            add_special_tokens=False,
-        )
-        data["para_input_ids"] = para_input_encodings.input_ids
-        data["para_attention_mask"] = para_input_encodings.attention_mask
+    if paraphraser is not None:
+        para_data = paraphraser.prepare_text_for_generation(rawdata.paraphrase_inputs)
+        data.update(para_data)
 
     return DictDataset(data)
 
 
 def create_dataloader(
-    tokenizer: AutoTokenizer,
+    model: MainLM,
     train_file_name: Optional[str] = None,
     dev_file_name: Optional[str] = None,
     test_file_name: Optional[str] = None,
     task_name: Optional[str] = None,
-    para_tokenizer: Optional[AutoTokenizer] = None,
+    paraphraser: Optional[Paraphraser] = None,
 ) -> DataLoader:
     """Function to create the required dataloader to train the LM models."""
     if task_name in ["squad", "narrativeqa", "race"]:
@@ -264,7 +228,7 @@ def create_dataloader(
             shuffle = False
             batch_size = FLAGS.eval_batch_size
 
-        dataset = gen_tokenize_data(gen_rawdata, tokenizer, para_tokenizer)
+        dataset = gen_tokenize_data(gen_rawdata, model, paraphraser)
         dataloader = DataLoader(
             dataset,
             shuffle=False,

@@ -10,10 +10,10 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+from src.base_lm import BaseLM
 from src.cache import LruCache
-from src.checkpoint_utils import model_load, model_save
 from src.general_utils import DictDataset, white_space_fix
-from src.model_utils import clear_cache, encoder_decoder_log_of_labels, mlm_log_of_labels, optimizer_to, set_random_seed
+from src.model_utils import encoder_decoder_log_of_labels, mlm_log_of_labels
 
 FLAGS = flags.FLAGS
 
@@ -32,26 +32,15 @@ flags.DEFINE_integer("paraphrase_cache_capacity", 100000, "The maximum capacity 
 _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 
 
-class Paraphraser(torch.nn.Module):
+class Paraphraser(BaseLM):
     """Main class to load a paraphraser or train it."""
 
-    def __init__(self, device: str, fixed: bool = False) -> None:
-        super().__init__()
+    def __init__(self, device: str) -> None:
+        super().__init__(device, model_name="paraphraser")
 
-        if not torch.cuda.is_available():
-            raise Exception("CUDA is not available. Code has been tested for cuda GPUs.")
-
-        set_random_seed(FLAGS.seed)
-        self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
-        self.fixed = fixed
         self.cache: LruCache = LruCache(capacity=FLAGS.paraphrase_cache_capacity, filename=f"{FLAGS.para_model_path}/cache.bin")
-
-        # for some subclasses, we will compute per token log probabilities.
-        # pad tokens have index -100 in huggingface.
-        # don't reduce loss (log likelihood), compute loss per token.
-        self.loss_func = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
 
         # to train the paraphraser, we update all of its parameters.
         self.optimizer = PagedAdamW8bit(self.model.parameters(), lr=FLAGS.paraphrase_learning_rate)
@@ -59,38 +48,19 @@ class Paraphraser(torch.nn.Module):
 
     def save_to_checkpoint(self, para_model_path: str, para_checkpoint_name: str) -> None:
         """Save the model components to the disk."""
-        model_save(
-            model=self.model,
-            model_path=para_model_path,
-            checkpoint_name=f"_paraphraser_{para_checkpoint_name}",
-            optimizer=self.optimizer,
-            scheduler=self.scheduler,
-        )
+        super().save_to_checkpoint(para_model_path, para_checkpoint_name)
         # Save cache information.
         self.cache.save()
 
-    def load_from_checkpoint(self, para_model_path: str, para_checkpoint_name: str) -> None:
+    def load_from_checkpoint(self, para_model_path: str, para_checkpoint_name: str, peft_load: bool = False) -> None:
         """Load the model components from the disk."""
-        model, optimizer, scheduler = model_load(
-            model=self.model,
-            model_path=para_model_path,
-            checkpoint_name=f"_paraphraser_{para_checkpoint_name}",
-            peft_load=False,
-            optimizer=self.optimizer,
-            scheduler=self.scheduler,
-        )
-        self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-
+        super().load_from_checkpoint(para_model_path, para_checkpoint_name, peft_load=peft_load)
         self.cache.filename = f"{para_model_path}/cache.bin"
         self.cache.load()
 
     def to_device(self) -> None:
         """Move the required modules to the gpu on the given device."""
-        self.model.to(self.device)
-        self.loss_func.to(self.device)
-        optimizer_to(self.optimizer, self.device)
+        super().to_device()
         self.cache.load_to_device(self.device)
 
     def convert_to_ids(self, texts: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -112,7 +82,7 @@ class Paraphraser(torch.nn.Module):
         """Convert texts to ids and return the dataset required for generation
         only."""
         ids, mask = self.convert_to_ids(texts)
-        data = {"para_input_ids": ids, "para_attention_mask": mask, "input_texts": texts}
+        data = {"para_input_ids": ids, "para_attention_mask": mask, "para_input_texts": texts}
         return data
 
     def prepare_text_for_training(self, texts: List[str], output_texts: List[str]) -> Dict[str, Any]:
@@ -121,33 +91,14 @@ class Paraphraser(torch.nn.Module):
         input_ids, input_mask = self.convert_to_ids(texts)
         output_ids, output_mask = self.convert_to_ids(output_texts)
         data = {
-            "input_texts": texts,
-            "output_texts": output_texts,
+            "para_input_texts": texts,
+            "para_output_texts": output_texts,
             "para_input_ids": input_ids,
             "para_attention_mask": input_mask,
             "para_labels": output_ids,
             "para_target_attention_mask": output_mask,
         }
         return data
-
-    def predict_mode_on(self) -> None:
-        """For each iteration of prediction over batch, clear gpu cache, turn
-        on eval mode."""
-        clear_cache()
-        # turn on eval mode which disables dropout.
-        self.model.eval()
-
-    def train_mode_on(self) -> None:
-        """Before every forward-backward iteration over batch, clear gpu cache,
-        turn on train mode!"""
-        clear_cache()
-        # turn on training mode which enables dropout.
-        self.model.train()
-
-    def data_to_device(self, batch: torch.utils.data.Dataset, keys: List[str]) -> Dict[str, torch.Tensor]:
-        """Move the batch tensors specified by keys into the gpu and return a
-        dictionary to access the gpu tensors."""
-        return {key: batch[key].to(self.device) for key in keys}
 
     def decode_paraphrases_atomic(
         self,
@@ -280,7 +231,7 @@ class Paraphraser(torch.nn.Module):
             batch_size = batch["para_input_ids"].size()[0]
             paraphrases_indices: Dict[int, Tuple[List[str], torch.Tensor]] = {}
             missed_indices = []
-            for idx, para_input_text in enumerate(batch["input_texts"]):
+            for idx, para_input_text in enumerate(batch["para_input_texts"]):
                 value = self.cache.get(para_input_text)
                 if value is not None:
                     # This is a hit.
@@ -304,7 +255,7 @@ class Paraphraser(torch.nn.Module):
                     new_paraphrases = missed_paraphrases[missed_idx * num_return_seq : (missed_idx + 1) * num_return_seq]
                     new_log_p = missed_log_ps[missed_idx * num_return_seq : (missed_idx + 1) * num_return_seq]
                     paraphrases_indices[missed_idx] = (new_paraphrases, new_log_p)
-                    self.cache.insert(key=batch["input_texts"][missed_idx], value=paraphrases_indices[missed_idx])
+                    self.cache.insert(key=batch["para_input_texts"][missed_idx], value=paraphrases_indices[missed_idx])
 
             paraphrases = []
             log_ps = []
@@ -363,6 +314,7 @@ def example_test_train_loop(model: Paraphraser) -> None:
     text = ["Today seems to be a rainy day in Toronto, and I like it!", "I hate you bro."]
     data = model.prepare_text_for_generation(text)
     dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=False)
+    start_time = time.time()
     for data in dataloader:
         logging.info(data)
 
@@ -376,11 +328,14 @@ def example_test_train_loop(model: Paraphraser) -> None:
         logging.info(paraphrases)
         logging.info(log_ps)
 
+    end_time = time.time()
+    logging.info(f"Time took: {end_time-start_time}")
+
     # Test the training loop.
     output_text = ["Today seems to be a rainy day in Toronto", "I hate you!"]
     data = model.prepare_text_for_training(text, output_text)
     dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=True)
-    epochs = 20
+    epochs = 10
     for e in range(epochs):
         for data in dataloader:
             log_ps = model.paraphrase_forward_pass(data, train=True)
@@ -473,27 +428,31 @@ def example_test_train_loop(model: Paraphraser) -> None:
     assert paraphrases == cached_paraphrases
     assert torch.all(log_ps == cached_log_ps)
 
-    for data in dataloader:
-        logging.info("mixed testing.")
-        paraphrases, log_ps = new_model.generate_paraphrases(
-            data, num_return_seq=2, decoding_technique="mixed", use_internal_cache=False
-        )
-        logging.info(paraphrases)
-        logging.info(log_ps)
+    start_time = time.time()
+    for i in range(10):
+        for data in dataloader:
+            logging.info("mixed testing.")
+            paraphrases, log_ps = new_model.generate_paraphrases(
+                data, num_return_seq=2, decoding_technique="mixed", use_internal_cache=False
+            )
+            logging.info(paraphrases)
+            logging.info(log_ps)
 
-        logging.info("top p testing.")
-        paraphrases, log_ps = new_model.generate_paraphrases(
-            data, num_return_seq=2, decoding_technique="top_p", use_internal_cache=False
-        )
-        logging.info(paraphrases)
-        logging.info(log_ps)
+            logging.info("top p testing.")
+            paraphrases, log_ps = new_model.generate_paraphrases(
+                data, num_return_seq=2, decoding_technique="top_p", use_internal_cache=False
+            )
+            logging.info(paraphrases)
+            logging.info(log_ps)
 
-        logging.info("diverse beam search testing.")
-        paraphrases, log_ps = new_model.generate_paraphrases(
-            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=False
-        )
-        logging.info(paraphrases)
-        logging.info(log_ps)
+            logging.info("diverse beam search testing.")
+            paraphrases, log_ps = new_model.generate_paraphrases(
+                data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=False
+            )
+            logging.info(paraphrases)
+            logging.info(log_ps)
+    end_time = time.time()
+    logging.info(f"Time took for 10 prediction loops: {end_time-start_time}")
 
 
 def main(argv: Any) -> None:

@@ -1,6 +1,6 @@
-"""Load LM with parameter efficiency."""
+"""Load LM efficiently."""
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from absl import flags
@@ -13,13 +13,17 @@ from peft import (
     get_peft_model,
     prepare_model_for_kbit_training,
 )
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, PreTrainedModel, PreTrainedTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+)
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("pretrained_model", "/model-weights/Llama-2-7b-chat-hf", "initial pre-trained model to use as backbone LM.")
-
-flags.DEFINE_integer("maximum_sequence_length", 1024, "The maximum sequence length.")
 flags.DEFINE_integer("r", 16, "rank hyper-parameter for lora.")
 flags.DEFINE_integer("lora_alpha", 8, "alpha hyper-parameter for lora.")
 flags.DEFINE_float("lora_dropout", 0.05, "dropout rate hyper-parameter for lora.")
@@ -27,6 +31,7 @@ flags.DEFINE_integer("prompt_length", 25, "length of the prompts in the input se
 flags.DEFINE_string(
     "prompt_tuning_init_text", "Classify the text for me.", "What text to use to initialize the soft prompt embedding."
 )
+
 # Make sure we have some tokens defined for the LM, if not defined in the model.
 _EXTRA_TOKENS = {
     "pad_token": "<pad>",
@@ -40,65 +45,83 @@ _EXTRA_TOKENS = {
 target_modules = ["q_proj", "v_proj"]
 
 
-def load_peft_model_and_tokenizer(
-    load_in_4bit: bool = True,
+def load_peft_model(
+    model: PreTrainedModel,
+    num_quantized_bits: int = 16,
     adapter_name: str = "lora",
     is_trainable: bool = False,
-) -> Tuple[torch.nn.Module, PreTrainedTokenizer]:
+    model_type: str = "causal_lm",
+    lora_target_modules: List[str] = target_modules,
+) -> torch.nn.Module:
     """Load a trained PEFT adapter to the base model and return the PeftModel.
 
     Args:
     ----
-        load_in_4bit: Whether to load the model in 4bit.
-        adapter_name: e.g. lora
-        is_trainable: train or inference mode
+        model: the main model.
+        num_quantized_bits: number of bits in the loaded model.
+        adapter_name: e.g. lora.
+        is_trainable: train or inference mode.
+        model_type: causal lm or seq-to-seq.
+        lora_target_modules: which modules to train with lora.
 
     Returns:
     -------
         The PEFT model and tokenizer.
     """
-    model, tokenizer = load_model_and_tokenizer(load_in_4bit)
+    if model_type == "causal_lm":
+        task_type = TaskType.CAUSAL_LM
+    elif model_type == "seq_to_seq_lm":
+        task_type = TaskType.SEQ_2_SEQ_LM
+
     if adapter_name == "lora":
         peft_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
+            task_type=task_type,
             inference_mode=not is_trainable,
             r=FLAGS.r,
             lora_alpha=FLAGS.lora_alpha,
             lora_dropout=FLAGS.lora_dropout,
             bias="none",
             init_lora_weights="loftq",
-            loftq_config=LoftQConfig(loftq_bits=4),
-            target_modules=target_modules,
+            loftq_config=LoftQConfig(loftq_bits=num_quantized_bits),
+            target_modules=lora_target_modules,
         )
 
     elif adapter_name == "soft_prompt_tuning":
         peft_config = PromptTuningConfig(
-            task_type=TaskType.CAUSAL_LM,
+            task_type=task_type,
             prompt_tuning_init=PromptTuningInit.TEXT,
             num_virtual_tokens=FLAGS.prompt_length,
             prompt_tuning_init_text=FLAGS.prompt_tuning_init_text,
-            tokenizer_name_or_path=FLAGS.pretrained_model,
+            tokenizer_name_or_path=model.config._name_or_path,
         )
 
     peft_model = get_peft_model(model, peft_config)
     peft_model.print_trainable_parameters()
-    return peft_model, tokenizer
+    return peft_model
 
 
-def load_model_and_tokenizer(load_in_4bit: Optional[bool] = True) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
+def load_model_and_tokenizer(
+    model_id: str, model_type: str, model_dtype: torch.dtype, attn_implementation: str, load_in_4bit: Optional[bool] = True
+) -> Tuple[PreTrainedModel, PreTrainedTokenizer]:
     """Load the model and tokenizer.
 
     Args:
     ----
-        use_mp: Whether to use mixed-precision.
-        use_fa: Whether to use Flash Attention 2.
+        model_id: the id for the pre-trained model.
+        model_type: causal lm or seq_to_seq_lm.
+        model_dtype: model data type.
+        load_in_4bit: Whether to load in 4 bit quantization.
 
     Returns:
     -------
         The model and tokenizer.
     """
     # load model
-    model_args: Dict[str, Any] = {"use_cache": True, "torch_dtype": torch.bfloat16, "attn_implementation": "flash_attention_2"}
+    if model_type == "causal_lm":
+        ModelClass = AutoModelForCausalLM
+    elif model_type == "seq_to_seq_lm":
+        ModelClass = AutoModelForSeq2SeqLM
+    model_args: Dict[str, Any] = {"use_cache": False, "torch_dtype": model_dtype, "attn_implementation": attn_implementation}
     if load_in_4bit:
         quant_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -107,17 +130,16 @@ def load_model_and_tokenizer(load_in_4bit: Optional[bool] = True) -> Tuple[PreTr
             bnb_4bit_use_double_quant=True,
         )
         model_args["quantization_config"] = quant_config
-    model = AutoModelForCausalLM.from_pretrained(
-        FLAGS.pretrained_model,
+    model = ModelClass.from_pretrained(
+        model_id,
         **model_args,
     )
     model.gradient_checkpointing_enable()
     model = prepare_model_for_kbit_training(model)
 
     # load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(FLAGS.pretrained_model)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     tokenizer.add_special_tokens(_EXTRA_TOKENS)
-    tokenizer.model_max_length = FLAGS.maximum_sequence_length
 
     if torch.cuda.is_available():
         # extend embeddings to a multiple so we use Tensor cores

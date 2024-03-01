@@ -40,7 +40,7 @@ function install_package () {
 	if [ "$OS" = "mac" ]; then
 		pip3 install --pre torch torchvision torchaudio torchtext \
 			--extra-index-url https://download.pytorch.org/whl/nightly/cpu
-		pip3 install --no-cache-dir tensorflow tensorboard
+		python3 -m pip install tensorflow[and-cuda]pip3 install --no-cache-dir tensorflow tensorboard
 		pip3 install --no-cache-dir tensorflow-macos
 		pip3 install -e .'[dev]'
 
@@ -63,9 +63,11 @@ function install_package () {
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
    	fi
-   	pip3 install -U "transformers==4.38.1" --upgrade
 	pip3 install -U sentence-transformers
 	pip3 install git+https://github.com/huggingface/transformers
+	pip3 uninstall torchtriton
+	pip3 install triton==2.2.0
+	export TRITON_PTXAS_PATH=/var/local/hack/cuda/bin/ptxas
 
 }
 
