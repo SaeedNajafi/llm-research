@@ -35,7 +35,7 @@ flags.DEFINE_string(
     "Whether to do on-policy sampling using the paraphrase model \
         or off-policy sampling using a separate paraphrase model, or include PPO KL while sampling.",
 )
-flags.DEFINE_float("learning_rate", 0.0001, "The learning rate used to train the main model", lower_bound=0.0)
+flags.DEFINE_float("learning_rate", 0.001, "The learning rate used to train the main model", lower_bound=0.0)
 flags.DEFINE_float(
     "kl_penalty_coefficient",
     0.1,
@@ -85,16 +85,15 @@ class MainLM(BaseLM):
             if self.training_type == "soft_prompt_finetune":
                 peft_model = load_peft_model(
                     model=model,
-                    num_quantized_bits=4,
                     adapter_name="soft_prompt_tuning",
                     is_trainable=FLAGS.mode == "train",
                     model_type="causal_lm",
                 )
 
             if self.training_type == "lora_finetune":
+                print(FLAGS.mode == "train")
                 peft_model = load_peft_model(
                     model=model,
-                    num_quantized_bits=4,
                     adapter_name="lora",
                     is_trainable=FLAGS.mode == "train",
                     model_type="causal_lm",
@@ -155,13 +154,14 @@ class MainLM(BaseLM):
         loaded_batch = self.data_to_device(batch, keys=["lm_input_ids_for_train", "lm_attention_mask_for_train"])
         input_ids = loaded_batch["lm_input_ids_for_train"]
         attention_mask = loaded_batch["lm_attention_mask_for_train"]
-        logits = lm_logits(
-            model=self.model,
-            input_ids=input_ids,
-            input_mask=attention_mask,
-        )
-        masked_labels = input_ids.masked_fill(input_ids == self.tokenizer.pad_token_id, -100)
-        return llama2_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.loss_func)
+        with torch.set_grad_enabled(True):
+            logits = lm_logits(
+                model=self.model,
+                input_ids=input_ids,
+                input_mask=attention_mask,
+            )
+            masked_labels = input_ids.masked_fill(input_ids == self.tokenizer.pad_token_id, -100)
+            return llama2_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.loss_func)
 
     def llama2_generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
         """Using the Llama2, generate new text.
@@ -204,7 +204,7 @@ class MainLM(BaseLM):
         return predictions_str, final_log_ps / actual_lens
 
 
-def example_test_train_loop(model: MainLM) -> None:
+def example_test_loop(model: MainLM) -> None:
     """Do a complete test of the model."""
     instruction = "In this task, you are given a context and question. \
             Provide a short phrase as the answer for the given question using only the information from the context. \
@@ -233,6 +233,54 @@ def example_test_train_loop(model: MainLM) -> None:
     logging.info(f"Time took: {end_time-start_time}")
 
 
+def example_train_loop(model: MainLM) -> None:
+    """Do a complete train of the model."""
+    instruction = "In this task, you are given a context and question. \
+            Provide a short phrase as the answer for the given question using only the information from the context. \
+            If you do not know the answer from the context, generate '<no_result>' in the output. \
+            Do not repeat the question in the output."
+    template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
+    input_texts = [
+        "Question: What grade did Saeed get in the exam? Context: Saeed scores 80 in the math exam.",
+        "Question: Who is the president of the USA? Context: Saeed is the president of the United States of America.",
+        "Question: Who got the score A? Context: Saeed is the president of the United States of America.",
+    ]
+    input_texts = [template.format(instruction=instruction, input_text=txt) for txt in input_texts]
+    output_texts = ["Saeed got 80 in the math exam. </s>", "The president of the USA is Saeed. </s>", "I don't know </s>"]
+    data = model.prepare_text(input_texts, output_texts)
+    dataloader = DataLoader(DictDataset(data), batch_size=len(input_texts), shuffle=True)
+
+    epochs = 100
+    for e in range(epochs):
+        for data in dataloader:
+            log_ps = model.llama2_train_pass(data)
+            loss = -torch.mean(log_ps, dim=0)
+            model.optimizer.zero_grad()
+            loss.backward()
+            logging.info(f"epoch_{e} loss_value:{loss.item()}")
+            model.optimizer.step()
+            model.scheduler.step(e)
+
+    logging.info(f"last_lr before saving: {model.scheduler.get_last_lr()}")
+    model.save_to_checkpoint("/tmp", "testing_stage")
+
+    del model
+
+    FLAGS.mode = "test"
+    model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
+    model.load_from_checkpoint("/tmp", "testing_stage", peft_load=True)
+    model.to_device()
+    for data in dataloader:
+        logging.info(data)
+
+        logging.info("inference")
+        answers, log_ps = model.llama2_generation_pass(data)
+        logging.info(answers)
+        logging.info(log_ps)
+
+    del model
+
+
 def main(argv: Any) -> None:
     """Example function to launch the train and generate functions."""
     del argv
@@ -241,8 +289,14 @@ def main(argv: Any) -> None:
     FLAGS.mode = "test"
     model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
     model.to_device()
-    example_test_train_loop(model)
+    example_test_loop(model)
     del model
+
+    logging.info("Training the model on gpu!")
+    FLAGS.mode = "train"
+    model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
+    model.to_device()
+    example_train_loop(model)
 
 
 if __name__ == "__main__":

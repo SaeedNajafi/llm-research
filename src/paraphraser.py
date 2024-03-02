@@ -135,7 +135,7 @@ class Paraphraser(BaseLM):
                 input_ids=para_input_ids,
                 attention_mask=para_attention_mask,
                 do_sample=True,
-                top_p=FLAGS.top_p,
+                top_p=FLAGS.paraphrase_top_p,
                 temperature=temperature,
                 max_length=FLAGS.paraphrase_generation_max_length,
                 num_return_sequences=num_return_seq,
