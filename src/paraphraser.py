@@ -23,7 +23,7 @@ flags.DEFINE_string("para_model_path", "/tmp", "The main directory to save or lo
 flags.DEFINE_string("para_checkpoint_name", "last", "The checkpoint name to load the paraphrase from.")
 flags.DEFINE_integer("no_repeat_ngram_size", 2, "Related to generation with beam search.")
 flags.DEFINE_integer("paraphrase_generation_max_length", 1024, "Maximum length to use for paraphrase generation.")
-flags.DEFINE_float("top_p", 0.99, "The top_p value used in nucleus sampling.")
+flags.DEFINE_float("paraphrase_top_p", 0.99, "The top_p value used in nucleus sampling.")
 flags.DEFINE_float("repetition_penalty", 10.0, "The penalty for repeating sequences in the diverse beam search algorithm.")
 flags.DEFINE_float("diversity_penalty", 3.0, "The diversity penalty used in the diverse beam search algorithm.")
 flags.DEFINE_float("diverse_beam_temperature", 0.7, "The temperature value used in diverse beam search.")
@@ -72,7 +72,7 @@ class Paraphraser(BaseLM):
         encodings = self.tokenizer(
             modified_texts,
             truncation=True,
-            padding="max_length",
+            padding=True,
             max_length=FLAGS.paraphrase_generation_max_length,
             add_special_tokens=False,
         )
@@ -134,7 +134,6 @@ class Paraphraser(BaseLM):
             predictions_output = self.model.generate(
                 input_ids=para_input_ids,
                 attention_mask=para_attention_mask,
-                no_repeat_ngram_size=FLAGS.no_repeat_ngram_size,
                 do_sample=True,
                 top_p=FLAGS.top_p,
                 temperature=temperature,

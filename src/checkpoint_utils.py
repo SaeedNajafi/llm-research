@@ -13,8 +13,6 @@ from torch.utils.data.sampler import Sampler
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("model_path", "/tmp/", "main directory to save or load the model from")
-
 
 def save_data(data: Any, path: str) -> None:
     """Save the object to the file."""

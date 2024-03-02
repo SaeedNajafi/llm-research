@@ -125,6 +125,47 @@ def mlm_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: tor
     return torch.sum(good_log_p, dim=1)
 
 
+def llama2_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+    """Compute the actual log of labels given pre-computed logits."""
+
+    # Shift so that tokens < n predict n
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = labels[..., 1:].contiguous()
+    shift_logits_flattened = shift_logits.view(-1, shift_logits.size(-1))
+    shift_labels_flattened = shift_labels.view(-1)
+    log_p = -loss_func(
+        shift_logits_flattened,
+        shift_labels_flattened,
+    )
+
+    batch_size, sequence_length, vocab_size = shift_logits.size()
+
+    # compute per-token log probability in a sequence.
+    log_p = log_p.view(batch_size, sequence_length)
+
+    # non-masked tokens have index -100 in huggingface.
+    good_log_p = log_p.masked_fill_(shift_labels == -100, 0.0)
+
+    # good_log_p now has the log probability of the output labels
+    return torch.sum(good_log_p, dim=1)
+
+
+def lm_logits(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    input_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Do a forward computation and compute the logits for the given input_ids
+    for a language model."""
+
+    output = model(
+        input_ids=input_ids,
+        attention_mask=input_mask,
+        labels=None,
+    )
+    return output.logits
+
+
 def set_random_seed(seed: int) -> None:
     """Set the random seed, which initializes the random number generator.
 
