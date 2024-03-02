@@ -4,15 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from absl import flags
-from peft import (
-    LoftQConfig,
-    LoraConfig,
-    PromptTuningConfig,
-    PromptTuningInit,
-    TaskType,
-    get_peft_model,
-    prepare_model_for_kbit_training,
-)
+from peft import LoraConfig, PromptTuningConfig, PromptTuningInit, TaskType, get_peft_model, prepare_model_for_kbit_training
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSeq2SeqLM,
@@ -81,8 +73,7 @@ def load_peft_model(
             lora_alpha=FLAGS.lora_alpha,
             lora_dropout=FLAGS.lora_dropout,
             bias="none",
-            init_lora_weights="loftq",
-            loftq_config=LoftQConfig(loftq_bits=num_quantized_bits),
+            init_lora_weights=True,
             target_modules=lora_target_modules,
         )
 

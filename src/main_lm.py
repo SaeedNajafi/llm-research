@@ -1,15 +1,19 @@
 """This module implements the backbone LM and the paraphrasing module that
 helps to train LM better."""
 
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
-from absl import flags
+from absl import app, flags, logging
 from bitsandbytes.optim.adamw import PagedAdamW8bit
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.utils.data import DataLoader
 
 from src.base_lm import BaseLM
+from src.general_utils import DictDataset
 from src.load_lm import load_model_and_tokenizer, load_peft_model
+from src.model_utils import llama2_log_of_labels, lm_logits, mlm_log_of_labels
 from src.paraphraser import Paraphraser
 
 FLAGS = flags.FLAGS
@@ -17,7 +21,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_integer("lm_input_max_length", 1024, "Maximum length to use for lm on the input side only.")
 flags.DEFINE_integer("lm_output_max_length", 128, "Maximum length to use for lm on the output side only.")
 
-flags.DEFINE_string("pretrained_model", "/model-weights/Llama-2-7b-chat-hf", "initial pre-trained model to use as backbone LM.")
+flags.DEFINE_string("pretrained_model", "meta-llama/Llama-2-13b-chat-hf", "initial pre-trained model to use as backbone LM.")
 flags.DEFINE_string("mode", "train", "the mode of run? train or test")
 flags.DEFINE_string("model_path", "/tmp/", "main directory to save or load the model from")
 flags.DEFINE_string("checkpoint", None, "checkpoint name to load from.")
@@ -38,6 +42,14 @@ flags.DEFINE_float(
     "What is the coefficient for the KL penalty used in the ppo algorithm?",
 )
 
+# Decoding hyper-parameter.
+flags.DEFINE_float(
+    "temperature",
+    0.6,
+    "Temperature used for the softmax to smooth or sharpen the token probabilities.",
+)
+flags.DEFINE_float("lm_top_p", 0.90, "The top_p value used in nucleus sampling for the main lm.")
+
 
 class MainLM(BaseLM):
     """Wrapper class around the LM Model to experiment with different prompting
@@ -51,10 +63,13 @@ class MainLM(BaseLM):
         enable_paraphrase_training: int,
         paraphrase_model: Optional[Paraphraser] = None,
         fixed_paraphrase_model: Optional[Paraphraser] = None,
+        lm_type: str = "llama2",
+        training_type: str = "lora_finetune",
     ) -> None:
         super().__init__(device, "main_lm")
 
-        self.lm = FLAGS.lm_type
+        self.lm = lm_type
+        self.training_type = training_type
         self.device = device
         self.paraphrase_model = paraphrase_model
         self.fixed_paraphrase_model = fixed_paraphrase_model
@@ -67,7 +82,7 @@ class MainLM(BaseLM):
                 attn_implementation="flash_attention_2",
                 load_in_4bit=True,
             )
-            if FLAGS.exp_type == "soft_prompt_finetune":
+            if self.training_type == "soft_prompt_finetune":
                 peft_model = load_peft_model(
                     model=model,
                     num_quantized_bits=4,
@@ -76,7 +91,7 @@ class MainLM(BaseLM):
                     model_type="causal_lm",
                 )
 
-            if FLAGS.exp_type == "lora_finetune":
+            if self.training_type == "lora_finetune":
                 peft_model = load_peft_model(
                     model=model,
                     num_quantized_bits=4,
@@ -109,14 +124,14 @@ class MainLM(BaseLM):
         input_encodings = self.tokenizer(
             inputs_for_training,
             truncation=True,
-            padding="max_length",
+            padding=True,
             max_length=FLAGS.lm_input_max_length + FLAGS.lm_output_max_length,
             add_special_tokens=False,
         )
         input_encodings_for_generation = self.tokenizer(
             texts,
             truncation=True,
-            padding="max_length",
+            padding=True,
             max_length=FLAGS.lm_input_max_length,
             add_special_tokens=False,
         )
@@ -129,3 +144,106 @@ class MainLM(BaseLM):
             "lm_attention_mask_for_generation": input_encodings_for_generation.attention_mask,
         }
         return data
+
+    def llama2_train_pass(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """Using the Llama2, run a forward computation over the batch, compute
+        the log probability over the batch.
+
+        This will be used for training.
+        """
+        self.train_mode_on()
+        loaded_batch = self.data_to_device(batch, keys=["lm_input_ids_for_train", "lm_attention_mask_for_train"])
+        input_ids = loaded_batch["lm_input_ids_for_train"]
+        attention_mask = loaded_batch["lm_attention_mask_for_train"]
+        logits = lm_logits(
+            model=self.model,
+            input_ids=input_ids,
+            input_mask=attention_mask,
+        )
+        masked_labels = input_ids.masked_fill(input_ids == self.tokenizer.pad_token_id, -100)
+        return llama2_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.loss_func)
+
+    def llama2_generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
+        """Using the Llama2, generate new text.
+
+        This will be used for inference.
+        """
+        self.predict_mode_on()
+        loaded_batch = self.data_to_device(batch, keys=["lm_input_ids_for_generation", "lm_attention_mask_for_generation"])
+        input_ids = loaded_batch["lm_input_ids_for_generation"]
+        attention_mask = loaded_batch["lm_attention_mask_for_generation"]
+        with torch.no_grad():
+            # more look here:
+            # https://github.com/facebookresearch/llama/blob/main/llama/generation.py#L130
+            predictions_output = self.model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                do_sample=True,
+                top_p=FLAGS.lm_top_p,
+                temperature=FLAGS.temperature,
+                max_length=FLAGS.lm_input_max_length + FLAGS.lm_output_max_length,
+                num_return_sequences=1,
+                output_logits=True,
+                return_dict_in_generate=True,
+                use_cache=True,
+                renormalize_logits=True,
+            )
+
+        prompt_len = input_ids.size()[1]
+        selected_samples = predictions_output.sequences[:, prompt_len:]
+        # all special tokens will be removed.
+        predictions_str = self.tokenizer.batch_decode(selected_samples, skip_special_tokens=True)
+        predictions_str = [pred.lstrip('"').lstrip("'").rstrip("'").rstrip('"').strip() for pred in predictions_str]
+
+        logits_list = list(predictions_output.logits)
+        logits = torch.stack(logits_list, dim=1)
+        labels_to_consider = selected_samples.masked_fill(selected_samples == self.tokenizer.pad_token_id, -100)
+        final_log_ps = mlm_log_of_labels(logits=logits, labels=labels_to_consider, loss_func=self.loss_func)
+        actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
+        # Average log probs per token (length normalization).
+        return predictions_str, final_log_ps / actual_lens
+
+
+def example_test_train_loop(model: MainLM) -> None:
+    """Do a complete test of the model."""
+    instruction = "In this task, you are given a context and question. \
+            Provide a short phrase as the answer for the given question using only the information from the context. \
+            If you do not know the answer from the context, generate '<no_result>' in the output. \
+            Do not repeat the question in the output."
+    template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
+    input_texts = [
+        "Question: What grade did Saeed get in the exam? Context: Saeed scores 80 in the math exam.",
+        "Question: Who is the president of the USA? Context: Saeed is the president of the United States of America.",
+        "Question: Who got the score A? Context: Saeed is the president of the United States of America.",
+    ]
+    input_texts = [template.format(instruction=instruction, input_text=txt) for txt in input_texts]
+    output_texts = ["Saeed got 80 in the math exam. </s>", "The president of the USA is Saeed. </s>", "I don't know </s>"]
+    data = model.prepare_text(input_texts, output_texts)
+    dataloader = DataLoader(DictDataset(data), batch_size=len(input_texts), shuffle=False)
+    start_time = time.time()
+    for data in dataloader:
+        logging.info(data)
+
+        logging.info("inference")
+        answers, log_ps = model.llama2_generation_pass(data)
+        logging.info(answers)
+        logging.info(log_ps)
+
+    end_time = time.time()
+    logging.info(f"Time took: {end_time-start_time}")
+
+
+def main(argv: Any) -> None:
+    """Example function to launch the train and generate functions."""
+    del argv
+
+    logging.info("Testing the model on gpu!")
+    FLAGS.mode = "test"
+    model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
+    model.to_device()
+    example_test_train_loop(model)
+    del model
+
+
+if __name__ == "__main__":
+    app.run(main)
