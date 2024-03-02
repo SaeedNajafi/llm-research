@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from absl import flags
-from peft import LoraConfig, PromptTuningConfig, PromptTuningInit, TaskType, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, PromptTuningConfig, PromptTuningInit, TaskType, get_peft_model
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForSeq2SeqLM,
@@ -34,12 +34,11 @@ _EXTRA_TOKENS = {
     "cls_token": "<CLS>",
 }
 
-target_modules = ["q_proj", "v_proj"]
+target_modules = ["q_proj", "v_proj", "o_proj", "k_proj"]
 
 
 def load_peft_model(
     model: PreTrainedModel,
-    num_quantized_bits: int = 16,
     adapter_name: str = "lora",
     is_trainable: bool = False,
     model_type: str = "causal_lm",
@@ -125,8 +124,6 @@ def load_model_and_tokenizer(
         model_id,
         **model_args,
     )
-    model.gradient_checkpointing_enable()
-    model = prepare_model_for_kbit_training(model)
 
     # load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_id)
