@@ -35,8 +35,8 @@ _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 class Paraphraser(BaseLM):
     """Main class to load a paraphraser or train it."""
 
-    def __init__(self, device: str) -> None:
-        super().__init__(device, model_name="paraphraser")
+    def __init__(self, device: str, seed: int = 42) -> None:
+        super().__init__(device, model_name="paraphraser", seed=seed)
 
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
@@ -52,7 +52,9 @@ class Paraphraser(BaseLM):
         # Save cache information.
         self.cache.save()
 
-    def load_from_checkpoint(self, para_model_path: str, para_checkpoint_name: str, peft_load: bool = False) -> None:
+    def load_from_checkpoint(
+        self, para_model_path: str, para_checkpoint_name: str, peft_load: bool = False, is_trainable: bool = False
+    ) -> None:
         """Load the model components from the disk."""
         super().load_from_checkpoint(para_model_path, para_checkpoint_name, peft_load=peft_load)
         self.cache.filename = f"{para_model_path}/cache.bin"

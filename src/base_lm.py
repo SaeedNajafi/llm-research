@@ -1,26 +1,24 @@
 """This a base class that implements some common functions for models."""
 
-from typing import Dict, List
+from abc import abstractmethod
+from typing import Dict, Iterator, List
 
 import torch
-from absl import flags
 
 from src.checkpoint_utils import model_load, model_save
 from src.model_utils import clear_cache, optimizer_to, set_random_seed
-
-FLAGS = flags.FLAGS
 
 
 class BaseLM(torch.nn.Module):
     """Parent class of all child LMs."""
 
-    def __init__(self, device: str, model_name: str) -> None:
+    def __init__(self, device: str, model_name: str, seed: int) -> None:
         super().__init__()
 
         if not torch.cuda.is_available():
             raise Exception("CUDA is not available. Code has been tested for cuda GPUs.")
 
-        set_random_seed(FLAGS.seed)
+        set_random_seed(seed)
         self.device = device
         self.model_name = model_name
 
@@ -43,13 +41,16 @@ class BaseLM(torch.nn.Module):
             scheduler=self.scheduler,
         )
 
-    def load_from_checkpoint(self, model_path: str, checkpoint_name: str, peft_load: bool = False) -> None:
+    def load_from_checkpoint(
+        self, model_path: str, checkpoint_name: str, peft_load: bool = False, is_trainable: bool = False
+    ) -> None:
         """Load the model components from the disk."""
         model, optimizer, scheduler = model_load(
             model=self.model,
             model_path=model_path,
             checkpoint_name=f"_{self.model_name}_{checkpoint_name}",
             peft_load=peft_load,
+            is_trainable=is_trainable,
             optimizer=self.optimizer,
             scheduler=self.scheduler,
         )
@@ -79,3 +80,13 @@ class BaseLM(torch.nn.Module):
         """Move the batch tensors specified by keys into the gpu and return a
         dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
+
+    @abstractmethod
+    def train(self, batch: torch.utils.data.Dataset) -> Dict[str, float]:
+        """The abstract train function."""
+        pass
+
+    @abstractmethod
+    def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Dict[str, str]]:
+        """The abstract predict function."""
+        pass

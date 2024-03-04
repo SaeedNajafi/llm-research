@@ -21,7 +21,9 @@ flags.DEFINE_integer("lora_alpha", 8, "alpha hyper-parameter for lora.")
 flags.DEFINE_float("lora_dropout", 0.05, "dropout rate hyper-parameter for lora.")
 flags.DEFINE_integer("prompt_length", 25, "length of the prompts in the input sequence for soft prompt tuning.")
 flags.DEFINE_string(
-    "prompt_tuning_init_text", "Classify the text for me.", "What text to use to initialize the soft prompt embedding."
+    "prompt_tuning_init_text",
+    "Please follow the giving instruction in the next sentence.",
+    "What text to use to initialize the soft prompt embedding.",
 )
 
 # Make sure we have some tokens defined for the LM, if not defined in the model.
