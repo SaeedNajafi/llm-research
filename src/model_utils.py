@@ -5,15 +5,6 @@ import random
 import numpy
 import tensorflow as tf
 import torch
-from absl import flags
-
-FLAGS = flags.FLAGS
-flags.DEFINE_integer("seed", 42, "the seed number")
-
-
-def white_space_fix(text: str) -> str:
-    """Remove extra spaces in text."""
-    return " ".join(text.split())
 
 
 def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int) -> torch.Tensor:

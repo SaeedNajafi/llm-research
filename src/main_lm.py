@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 from src.base_lm import BaseLM
 from src.general_utils import DictDataset
-from src.load_lm import load_model_and_tokenizer, load_peft_model
+from src.load_large_lm import load_model_and_tokenizer, load_peft_model
 from src.model_utils import llama2_log_of_labels, lm_logits, mlm_log_of_labels
 from src.paraphraser import Paraphraser
 
@@ -59,14 +59,15 @@ class MainLM(BaseLM):
     def __init__(
         self,
         device: str,
-        enable_para_augmentation: int,
-        enable_paraphrase_training: int,
-        paraphrase_model: Optional[Paraphraser] = None,
-        fixed_paraphrase_model: Optional[Paraphraser] = None,
         lm_type: str = "llama2",
         training_type: str = "lora_finetune",
+        enable_para_augmentation: Optional[int] = 0,
+        enable_paraphrase_training: Optional[int] = 0,
+        paraphrase_model: Optional[Paraphraser] = None,
+        fixed_paraphrase_model: Optional[Paraphraser] = None,
+        seed: int = 42,
     ) -> None:
-        super().__init__(device, "main_lm")
+        super().__init__(device, "main_lm", seed)
 
         self.lm = lm_type
         self.training_type = training_type
@@ -98,6 +99,7 @@ class MainLM(BaseLM):
                     is_trainable=FLAGS.mode == "train",
                     model_type="causal_lm",
                 )
+            model.model_type = "causal_lm"
         else:
             raise Exception(f"The following lm type {self.lm} has not been implemented!")
 
@@ -110,11 +112,6 @@ class MainLM(BaseLM):
 
         self.enable_para_augmentation = enable_para_augmentation
         self.enable_paraphrase_training = enable_paraphrase_training
-
-        if FLAGS.mode == "train" and self.enable_paraphrase_training == 1:
-            # for training with the paraphraser, we need average ensembling prediction
-            # while evaluating the checkpoints on the dev data.
-            FLAGS.ensemble_type = "paraphrase_predict"
 
     def prepare_text(self, texts: List[str], output_texts: List[str]) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for training
@@ -161,6 +158,12 @@ class MainLM(BaseLM):
                 input_mask=attention_mask,
             )
             masked_labels = input_ids.masked_fill(input_ids == self.tokenizer.pad_token_id, -100)
+            if self.training_type == "soft_prompt_finetune":
+                batch_size = masked_labels.size(0)
+                virtual_masks = (
+                    torch.ones((batch_size, FLAGS.prompt_length), device=self.device, dtype=masked_labels.dtype) * -100
+                )
+                masked_labels = torch.cat((virtual_masks, masked_labels), dim=1)
             return llama2_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.loss_func)
 
     def llama2_generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
@@ -233,7 +236,7 @@ def example_test_loop(model: MainLM) -> None:
     logging.info(f"Time took: {end_time-start_time}")
 
 
-def example_train_loop(model: MainLM) -> None:
+def example_train_loop(model: MainLM, training_type: str) -> None:
     """Do a complete train of the model."""
     instruction = "In this task, you are given a context and question. \
             Provide a short phrase as the answer for the given question using only the information from the context. \
@@ -250,7 +253,7 @@ def example_train_loop(model: MainLM) -> None:
     data = model.prepare_text(input_texts, output_texts)
     dataloader = DataLoader(DictDataset(data), batch_size=len(input_texts), shuffle=True)
 
-    epochs = 100
+    epochs = 10
     for e in range(epochs):
         for data in dataloader:
             log_ps = model.llama2_train_pass(data)
@@ -267,8 +270,8 @@ def example_train_loop(model: MainLM) -> None:
     del model
 
     FLAGS.mode = "test"
-    model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
-    model.load_from_checkpoint("/tmp", "testing_stage", peft_load=True)
+    model = MainLM(device="cuda:0", training_type=training_type)
+    model.load_from_checkpoint("/tmp", "testing_stage", peft_load=True, is_trainable=False)
     model.to_device()
     for data in dataloader:
         logging.info(data)
@@ -278,8 +281,6 @@ def example_train_loop(model: MainLM) -> None:
         logging.info(answers)
         logging.info(log_ps)
 
-    del model
-
 
 def main(argv: Any) -> None:
     """Example function to launch the train and generate functions."""
@@ -287,16 +288,21 @@ def main(argv: Any) -> None:
 
     logging.info("Testing the model on gpu!")
     FLAGS.mode = "test"
-    model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
+    model = MainLM(device="cuda:0")
     model.to_device()
     example_test_loop(model)
-    del model
 
-    logging.info("Training the model on gpu!")
+    logging.info("Training the model on gpu for LoRA")
     FLAGS.mode = "train"
-    model = MainLM(device="cuda:0", enable_para_augmentation=0, enable_paraphrase_training=0)
+    model = MainLM(device="cuda:0")
     model.to_device()
-    example_train_loop(model)
+    example_train_loop(model, training_type="lora_finetune")
+
+    logging.info("Training the model on gpu for soft prompt finetune.")
+    FLAGS.mode = "train"
+    model = MainLM(device="cuda:0", training_type="soft_prompt_finetune")
+    model.to_device()
+    example_train_loop(model, training_type="soft_prompt_finetune")
 
 
 if __name__ == "__main__":

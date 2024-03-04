@@ -119,6 +119,7 @@ def model_load(
     model_path: str,
     checkpoint_name: str,
     peft_load: bool,
+    is_trainable: Optional[bool] = False,
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRScheduler] = None,
 ) -> Tuple[torch.nn.Module, Optional[Optimizer], Optional[LRScheduler]]:
@@ -127,7 +128,12 @@ def model_load(
 
     logging.info(f"Loading from {full_path}_model")
     if peft_load:
-        model = PeftModel.from_pretrained(model, f"{full_path}_model.bin")
+        # config = PeftConfig.from_pretrained(f"{full_path}_model.bin")
+        # if model.model_type == "causal_lm":
+        #    pure_model = AutoModelForCausalLM.from_pretrained(config.base_model_name_or_path)
+        # elif model.model_type == "seq_to_seq_lm":
+        #    pure_model = AutoModelForSeq2SeqLM.from_pretrained(config.base_model_name_or_path)
+        model = PeftModel.from_pretrained(model, f"{full_path}_model.bin", is_trainable=is_trainable)
     else:
         model = model.from_pretrained(f"{full_path}_model.bin")
 
