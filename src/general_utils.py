@@ -99,7 +99,6 @@ def train_loop(
                     f"\rEpoch: {epoch} | Batch: {step} | Mean Loss: {mean_total_loss} | "
                     f"Epoch Loss: {mean_epoch_loss} | Loss: {loss_value}\n"
                 )
-                torch.cuda.reset_peak_memory_stats(device=None)
                 writer.add_scalar("GPU_Usage_train", torch.cuda.max_memory_allocated(device=None) / (1e9), global_step)
                 if global_step % steps_per_checkpoint == 0:
                     start_predicting(model, eval_dataloader, eval_file)
@@ -135,13 +134,14 @@ def test_loop(
     model: BaseLM,
     mode: str,
     model_path: str,
-    prediction_file: str,
+    prediction_file_name: str,
     test_dataloader: torch.utils.data.DataLoader,
     metric: Optional[Callable[[str], Dict[str, float]]] = None,
 ) -> None:
     writer = SummaryWriter(model_path)
     if mode in ["test", "inference", "eval"]:
         ("Predicting...")
+        prediction_file = os.path.join(model_path, prediction_file_name)
         start_predicting(model, test_dataloader, prediction_file)
         if metric is not None:
             scores = metric(prediction_file)
