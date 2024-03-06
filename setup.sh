@@ -16,10 +16,9 @@ function install_python () {
 		brew install python-tk@3.10
 		python3_command="python3.10"
 	elif [ "$OS" = "vcluster" ]; then
-		module load python/3.10.12
-		export PATH=$HOME/.local/bin:$PATH
+		module load python/3.10.12 cuda-11.8
 		python3_command="python3"
-  	elif [ "$OS" = "colab" ]; then
+	elif [ "$OS" = "colab" ]; then
 		python3_command="python3"
 	fi
 }
@@ -30,6 +29,7 @@ function install_env () {
 	${python3_command} -m venv $ENV_NAME-env
 	source $ENV_NAME-env/bin/activate
 	export PATH=${PWD}/$ENV_NAME-env/bin:$PATH
+	export CUDA_HOME=/pkgs/cuda-11.8
 	pip3 install --upgrade pip
 }
 
@@ -48,13 +48,12 @@ function install_package () {
 		pip3 install torch torchvision torchaudio torchtext \
 			--no-cache-dir --index-url https://download.pytorch.org/whl/cu118
 		pip3 install --no-cache-dir tensorflow tensorboard
-		export CUDA_HOME=/pkgs/cuda-11.8
 		pip3 install -e .'[dev]'
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && python3 -m pip install --no-cache-dir ninja
 		MAX_JOBS=7 pip3 install --no-cache-dir flash-attn --no-build-isolation
 
-  	elif [ "$OS" = "colab" ]; then
+	elif [ "$OS" = "colab" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
 		pip3 install --no-cache-dir tensorflow tensorboard
 		export CUDA_HOME=/usr
@@ -62,12 +61,12 @@ function install_package () {
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
-   	fi
+	fi
 	pip3 install -U sentence-transformers
 	pip3 install git+https://github.com/huggingface/transformers
 	pip3 uninstall torchtriton
 	pip3 install triton==2.2.0
-	export TRITON_PTXAS_PATH=/var/local/hack/cuda/bin/ptxas
+	export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
 
 }
 
