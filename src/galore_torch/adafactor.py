@@ -181,15 +181,15 @@ class Adafactor(Optimizer):
                     raise RuntimeError("Adafactor does not support sparse gradients.")
 
                 state = self.state[p]
-                
+
                 if "step" not in state:
                     state["step"] = 0
-                        
+
                 # GaLore Projection
                 if "rank" in group:
                     if "projector" not in state:
                         state["projector"] = GaLoreProjector(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
-                    
+
                     grad = state["projector"].project(grad, state["step"])
 
                 grad_shape = grad.shape
@@ -251,11 +251,11 @@ class Adafactor(Optimizer):
                     exp_avg = state["exp_avg"]
                     exp_avg.mul_(group["beta1"]).add_(update, alpha=(1 - group["beta1"]))
                     update = exp_avg
-                
+
                 # GaLore Projection Back
                 if "rank" in group:
                     update = state["projector"].project_back(update)
-    
+
                 if group["weight_decay"] != 0:
                     p_data_fp32.add_(p_data_fp32, alpha=(-group["weight_decay"] * lr))
 

@@ -84,15 +84,20 @@ class AdamW(Optimizer):
                     raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
 
                 state = self.state[p]
-                
+
                 if "step" not in state:
                     state["step"] = 0
-                        
+
                 # GaLore Projection
                 if "rank" in group:
                     if "projector" not in state:
-                        state["projector"] = GaLoreProjector(group["rank"], update_proj_gap=group["update_proj_gap"], scale=group["scale"], proj_type=group["proj_type"])
-                    
+                        state["projector"] = GaLoreProjector(
+                            group["rank"],
+                            update_proj_gap=group["update_proj_gap"],
+                            scale=group["scale"],
+                            proj_type=group["proj_type"],
+                        )
+
                     grad = state["projector"].project(grad, state["step"])
 
                 # State initialization
@@ -121,11 +126,11 @@ class AdamW(Optimizer):
 
                 # compute norm gradient
                 norm_grad = exp_avg / denom
-                
+
                 # GaLore Projection Back
                 if "rank" in group:
                     norm_grad = state["projector"].project_back(norm_grad)
-                
+
                 p.add_(norm_grad, alpha=-step_size)
 
                 # Just adding the square of the weights to the loss function is *not*
