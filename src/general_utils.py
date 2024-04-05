@@ -28,12 +28,15 @@ def start_predicting(model: BaseLM, dataloader: torch.utils.data.DataLoader, pre
         header_written = False
         step = 0
         for batch in dataloader:
-            for ret_row in model.predict(batch):
-                if not header_written:
-                    headers = ret_row.keys()
-                    writer.writerow(headers)
-                    header_written = True
-                writer.writerow(list(ret_row.values()))
+            try:
+                for ret_row in model.predict(batch):
+                    if not header_written:
+                        headers = ret_row.keys()
+                        writer.writerow(headers)
+                        header_written = True
+                    writer.writerow(list(ret_row.values()))
+            except Exception as e:
+                print("Error in prediction: ", e)
             step += 1
             print(f"Prediction Step: {step}.")
 
