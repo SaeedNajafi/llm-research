@@ -69,3 +69,4 @@
 /notebooks/16-shot-datasets/squad/test.tsv filter=lfs diff=lfs merge=lfs -text
 /notebooks/qa_llama2_examples.ipynb filter=lfs diff=lfs merge=lfs -text
 /notebooks/qa_t5_examples.ipynb filter=lfs diff=lfs merge=lfs -text
+/notebooks/hotpotqa_llama2.ipynb filter=lfs diff=lfs merge=lfs -text
