@@ -3,8 +3,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-gpu=4
-#SBATCH --mem=16G
-#SBATCH --gres=gpu:1
+#SBATCH --mem=24G
+#SBATCH --gres=gpu:2
 #SBATCH --output=llm-jupyter.%j.out
 #SBATCH --error=llm-jupyter.%j.err
 #SBATCH --partition=a40
