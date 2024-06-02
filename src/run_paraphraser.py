@@ -24,6 +24,7 @@ flags.DEFINE_float("diversity_penalty", 3.0, "The diversity penalty used in the 
 flags.DEFINE_float("diverse_beam_temperature", 0.7, "The temperature value used in diverse beam search.")
 flags.DEFINE_integer("paraphrase_cache_capacity", 100000, "The maximum capacity of the cache.")
 
+
 def example_test_train_loop(model: Paraphraser) -> None:
     """Do a complete test of the model."""
     text = ["Today seems to be a rainy day in Toronto, and I like it!", "I hate you bro."]
@@ -175,17 +176,19 @@ def main(argv: Any) -> None:
     del argv
 
     logging.info("Testing the model on gpu!")
-    model = Paraphraser(device="cuda:0",
-                        seed=42,
-                        para_checkpoint_name=FLAGS.para_checkpoint_name,
-                        para_model_path=FLAGS.para_model_path,
-                        paraphrase_cache_capacity=FLAGS.paraphrase_cache_capacity,
-                        diverse_beam_temperature=FLAGS.diverse_beam_temperature,
-                        repetition_penalty=FLAGS.repetition_penalty,
-                        no_repeat_ngram_size=FLAGS.no_repeat_ngram_size,
-                        paraphrase_generation_max_length=FLAGS.paraphrase_generation_max_length,
-                        paraphrase_learning_rate=FLAGS.paraphrase_learning_rate,
-                        paraphrase_top_p=FLAGS.paraphrase_top_p)
+    model = Paraphraser(
+        device="cuda:0",
+        seed=42,
+        para_checkpoint_name=FLAGS.para_checkpoint_name,
+        para_model_path=FLAGS.para_model_path,
+        paraphrase_cache_capacity=FLAGS.paraphrase_cache_capacity,
+        diverse_beam_temperature=FLAGS.diverse_beam_temperature,
+        repetition_penalty=FLAGS.repetition_penalty,
+        no_repeat_ngram_size=FLAGS.no_repeat_ngram_size,
+        paraphrase_generation_max_length=FLAGS.paraphrase_generation_max_length,
+        paraphrase_learning_rate=FLAGS.paraphrase_learning_rate,
+        paraphrase_top_p=FLAGS.paraphrase_top_p,
+    )
     model.to_device()
     example_test_train_loop(model)
     del model

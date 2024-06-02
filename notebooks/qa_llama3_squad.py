@@ -231,24 +231,22 @@ class LlamaQA(BaseLM):
         )
         self.model = model
         self.tokenizer = tokenizer
-        """
-        # to train the main lm, we update all of its parameters.
-        galore_params = []
-        target_modules_list = ["attn", "mlp"]
-        for module_name, module in self.model.named_modules():
-            if not isinstance(module, torch.nn.Linear):
-                continue
-            if not any(target_key in module_name for target_key in target_modules_list):
-                continue
-            print('enable GaLore for weights in module: ', module_name)
-            galore_params.append(module.weight)
-        id_galore_params = [id(p) for p in galore_params]
-        # make parameters without "rank" to another group
-        regular_params = [p for p in self.model.parameters() if id(p) not in id_galore_params]
-        # then call galore_adamw
-        param_groups = [{'params': regular_params},
-                        {'params': galore_params, 'rank': 128, 'update_proj_gap': 16, 'scale': 0.25, 'proj_type': 'std'}]
-        self.optimizer = GaLoreAdamW8bit(param_groups, lr=learning_rate)
+        """# to train the main lm, we update all of its parameters.
+
+        galore_params = [] target_modules_list = ["attn", "mlp"] for
+        module_name, module in self.model.named_modules():     if not
+        isinstance(module, torch.nn.Linear):         continue     if not
+        any(target_key in module_name for target_key in
+        target_modules_list):         continue     print('enable GaLore
+        for weights in module: ', module_name)
+        galore_params.append(module.weight) id_galore_params = [id(p)
+        for p in galore_params] # make parameters without "rank" to
+        another group regular_params = [p for p in
+        self.model.parameters() if id(p) not in id_galore_params] # then
+        call galore_adamw param_groups = [{'params': regular_params},
+        {'params': galore_params, 'rank': 128, 'update_proj_gap': 16,
+        'scale': 0.25, 'proj_type': 'std'}] self.optimizer =
+        GaLoreAdamW8bit(param_groups, lr=learning_rate)
         """
         self.optimizer = PagedAdamW8bit(self.model.parameters(), lr=learning_rate)
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=10, eta_min=learning_rate / 5.0)
@@ -330,11 +328,12 @@ class LlamaQA(BaseLM):
             output_row = {
                 "potential_answer": answer,
                 "prediction_score": log_ps[idx],
+                "id": batch["ids"][idx]
             }
             yield output_row
 
 
-def prepare_text(texts: List[str], model: PreTrainedModel) -> Dict[str, Any]:
+def prepare_text(texts: List[str], ids: List[str], model: PreTrainedModel) -> Dict[str, Any]:
     """Convert texts to ids and return the dataset required for training and
     inference."""
     input_encodings_for_generation = model.tokenizer(
@@ -345,6 +344,7 @@ def prepare_text(texts: List[str], model: PreTrainedModel) -> Dict[str, Any]:
         add_special_tokens=False,
     )
     data = {
+        "ids": ids,
         "lm_input_ids_for_generation": input_encodings_for_generation.input_ids,
         "lm_attention_mask_for_generation": input_encodings_for_generation.attention_mask,
     }
@@ -363,14 +363,16 @@ def main(argv: Any) -> None:
 
     next_example_number = len(contexts) + 1
     squad_inputs = []
+    squad_ids = []
     for idx, row in enumerate(dataset):
         context = row["context"]
         question = row["question"]
         user_final_message = input_example_template.format(idx=next_example_number, passage=context, question=question)
         squad_input = f"{instruction_llama}{user_final_message}"
         squad_inputs.append(squad_input)
+        squad_ids.append(row["id"])
 
-    data = prepare_text(squad_inputs, model)
+    data = prepare_text(squad_inputs, squad_ids, model)
     dataset = DictDataset(data)
     data_loader = DataLoader(dataset, batch_size=eval_batch_size, shuffle=False)
 

@@ -1,4 +1,5 @@
 """This module implements different metrics used to evaluate the predictions.
+
 We implement the PaSSiM metric here.
 """
 
@@ -8,10 +9,10 @@ import pandas as pd
 import torch
 from absl import flags
 from sentence_transformers import SentenceTransformer
-
-from src.model_utils import clear_cache
-from src.general_utils import DictDataset
 from torch.utils.data import DataLoader
+
+from src.general_utils import DictDataset
+from src.model_utils import clear_cache
 from src.paraphraser import Paraphraser
 
 FLAGS = flags.FLAGS
@@ -25,7 +26,11 @@ class QAMetricModel:
 
     model_id = "sentence-transformers/sentence-t5-xxl"
 
-    def __init__(self, device: str = "cuda:0", batch_size: int = 16, ) -> None:
+    def __init__(
+        self,
+        device: str = "cuda:0",
+        batch_size: int = 16,
+    ) -> None:
         """Save the gpu device and construct the model and cache it."""
         self.device = device
         self.batch_size = batch_size
