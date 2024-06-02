@@ -1,33 +1,16 @@
 """This module will implement the paraphrase generator."""
 
-import time
 from typing import Any, Dict, List, Tuple
 
 import torch
-from absl import app, flags, logging
 from bitsandbytes.optim.adamw import PagedAdamW8bit
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from torch.utils.data import DataLoader
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from src.base_lm import BaseLM
 from src.cache import LruCache
-from src.general_utils import DictDataset, white_space_fix
+from src.general_utils import white_space_fix
 from src.model_utils import encoder_decoder_log_of_labels, mlm_log_of_labels
-
-FLAGS = flags.FLAGS
-
-
-flags.DEFINE_float("paraphrase_learning_rate", 0.00005, "The learning rate used to train the paraphrase model", lower_bound=0.0)
-flags.DEFINE_string("para_model_path", "/tmp", "The main directory to save or load the paraphrase model from.")
-flags.DEFINE_string("para_checkpoint_name", "last", "The checkpoint name to load the paraphrase from.")
-flags.DEFINE_integer("no_repeat_ngram_size", 2, "Related to generation with beam search.")
-flags.DEFINE_integer("paraphrase_generation_max_length", 1024, "Maximum length to use for paraphrase generation.")
-flags.DEFINE_float("paraphrase_top_p", 0.99, "The top_p value used in nucleus sampling.")
-flags.DEFINE_float("repetition_penalty", 10.0, "The penalty for repeating sequences in the diverse beam search algorithm.")
-flags.DEFINE_float("diversity_penalty", 3.0, "The diversity penalty used in the diverse beam search algorithm.")
-flags.DEFINE_float("diverse_beam_temperature", 0.7, "The temperature value used in diverse beam search.")
-flags.DEFINE_integer("paraphrase_cache_capacity", 100000, "The maximum capacity of the cache.")
 
 _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 
@@ -35,16 +18,37 @@ _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 class Paraphraser(BaseLM):
     """Main class to load a paraphraser or train it."""
 
-    def __init__(self, device: str, seed: int = 42) -> None:
+    def __init__(self, device: str, seed: int = 42,
+                 paraphrase_cache_capacity: int = 100000,
+                 diverse_beam_temperature: float = 0.7,
+                 diversity_penalty: float = 3.0,
+                 repetition_penalty: float = 10.0,
+                 paraphrase_top_p: float = 0.99,
+                 paraphrase_generation_max_length: int = 1024,
+                 no_repeat_ngram_size: int = 2,
+                 para_checkpoint_name: str = "last",
+                 para_model_path: str = "/tmp",
+                 paraphrase_learning_rate: float = 0.00005) -> None:
         super().__init__(device, model_name="paraphraser", seed=seed)
 
+        self.paraphrase_cache_capacity = paraphrase_cache_capacity
+        self.diverse_beam_temperature = diverse_beam_temperature
+        self.diversity_penalty = diversity_penalty
+        self.repetition_penalty = repetition_penalty
+        self.paraphrase_top_p = paraphrase_top_p
+        self.paraphrase_generation_max_length = paraphrase_generation_max_length
+        self.no_repeat_ngram_size = no_repeat_ngram_size
+        self.para_checkpoint_name = para_checkpoint_name
+        self.para_model_path = para_model_path
+        self.paraphrase_learning_rate = paraphrase_learning_rate
+        
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
-        self.cache: LruCache = LruCache(capacity=FLAGS.paraphrase_cache_capacity, filename=f"{FLAGS.para_model_path}/cache.bin")
+        self.cache: LruCache = LruCache(capacity=self.paraphrase_cache_capacity, filename=f"{self.para_model_path}/cache.bin")
 
         # to train the paraphraser, we update all of its parameters.
-        self.optimizer = PagedAdamW8bit(self.model.parameters(), lr=FLAGS.paraphrase_learning_rate)
-        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=10, eta_min=FLAGS.paraphrase_learning_rate / 5.0)
+        self.optimizer = PagedAdamW8bit(self.model.parameters(), lr=self.paraphrase_learning_rate)
+        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=10, eta_min=self.paraphrase_learning_rate / 5.0)
 
     def save_to_checkpoint(self, para_model_path: str, para_checkpoint_name: str) -> None:
         """Save the model components to the disk."""
@@ -75,7 +79,7 @@ class Paraphraser(BaseLM):
             modified_texts,
             truncation=True,
             padding=True,
-            max_length=FLAGS.paraphrase_generation_max_length,
+            max_length=self.paraphrase_generation_max_length,
             add_special_tokens=False,
         )
         return encodings.input_ids, encodings.attention_mask
@@ -117,18 +121,18 @@ class Paraphraser(BaseLM):
                 input_ids=para_input_ids,
                 attention_mask=para_attention_mask,
                 do_sample=False,
-                no_repeat_ngram_size=FLAGS.no_repeat_ngram_size,
+                no_repeat_ngram_size=self.no_repeat_ngram_size,
                 num_beams=num_return_seq,
                 num_beam_groups=num_return_seq,
                 early_stopping=True,
-                max_length=FLAGS.paraphrase_generation_max_length,
+                max_length=self.paraphrase_generation_max_length,
                 num_return_sequences=num_return_seq,
                 output_logits=True,
                 return_dict_in_generate=True,
                 use_cache=True,
-                repetition_penalty=FLAGS.repetition_penalty,
-                diversity_penalty=FLAGS.diversity_penalty,
-                temperature=FLAGS.diverse_beam_temperature,
+                repetition_penalty=self.repetition_penalty,
+                diversity_penalty=self.diversity_penalty,
+                temperature=self.diverse_beam_temperature,
                 renormalize_logits=True,
             )
 
@@ -137,9 +141,9 @@ class Paraphraser(BaseLM):
                 input_ids=para_input_ids,
                 attention_mask=para_attention_mask,
                 do_sample=True,
-                top_p=FLAGS.paraphrase_top_p,
+                top_p=self.paraphrase_top_p,
                 temperature=temperature,
-                max_length=FLAGS.paraphrase_generation_max_length,
+                max_length=self.paraphrase_generation_max_length,
                 num_return_sequences=num_return_seq,
                 output_logits=True,
                 return_dict_in_generate=True,
@@ -308,164 +312,3 @@ class Paraphraser(BaseLM):
             )
 
         return class_log_p
-
-
-def example_test_train_loop(model: Paraphraser) -> None:
-    """Do a complete test of the model."""
-    text = ["Today seems to be a rainy day in Toronto, and I like it!", "I hate you bro."]
-    data = model.prepare_text_for_generation(text)
-    dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=False)
-    start_time = time.time()
-    for data in dataloader:
-        logging.info(data)
-
-        logging.info("diverse beam search testing.")
-        paraphrases, log_ps = model.generate_paraphrases(data, num_return_seq=2, decoding_technique="diverse_beam_search")
-        logging.info(paraphrases)
-        logging.info(log_ps)
-
-        logging.info("top_p testing.")
-        paraphrases, log_ps = model.generate_paraphrases(data, num_return_seq=2, decoding_technique="top_p")
-        logging.info(paraphrases)
-        logging.info(log_ps)
-
-    end_time = time.time()
-    logging.info(f"Time took: {end_time-start_time}")
-
-    # Test the training loop.
-    output_text = ["Today seems to be a rainy day in Toronto", "I hate you!"]
-    data = model.prepare_text_for_training(text, output_text)
-    dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=True)
-    epochs = 10
-    for e in range(epochs):
-        for data in dataloader:
-            log_ps = model.paraphrase_forward_pass(data, train=True)
-            loss = -torch.mean(log_ps, dim=0)
-            model.optimizer.zero_grad()
-            loss.backward()
-            logging.info(f"epoch_{e} loss_value:{loss.item()}")
-            model.optimizer.step()
-            model.scheduler.step(e)
-
-    logging.info("Testing caching latency with paraphrases.")
-    start_time = time.time()
-    for data in dataloader:
-        logging.info("diverse beam search testing.")
-        paraphrases, log_ps = model.generate_paraphrases(data, num_return_seq=2, decoding_technique="diverse_beam_search")
-        logging.info(paraphrases)
-        logging.info(log_ps)
-    end_time = time.time()
-    logging.info(f"Time took without cache: {end_time-start_time}")
-
-    start_time = time.time()
-    for data in dataloader:
-        logging.info("diverse beam search testing.")
-        paraphrases, log_ps = model.generate_paraphrases(
-            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=True
-        )
-        logging.info(paraphrases)
-        logging.info(log_ps)
-    end_time = time.time()
-    logging.info(f"Time took while cache building: {end_time-start_time}")
-
-    logging.info(f"last_lr before saving: {model.scheduler.get_last_lr()}")
-    model.save_to_checkpoint("/tmp", "testing_stage")
-
-    # Create a different model and load it.
-    FLAGS.para_model_path = "/tmp"
-    FLAGS.para_checkpoint_name = "testing_stage"
-    new_model = Paraphraser(device=model.device)
-    new_model.load_from_checkpoint(FLAGS.para_model_path, FLAGS.para_checkpoint_name)
-    new_model.to_device()
-    logging.info(new_model.scheduler.get_last_lr())
-
-    for data in dataloader:
-        logging.info("top_p testing.")
-        paraphrases, log_ps = new_model.generate_paraphrases(data, num_return_seq=2, decoding_technique="top_p")
-        logging.info(paraphrases)
-        logging.info(log_ps)
-
-    for p1, p2 in zip(model.model.parameters(), new_model.model.parameters()):
-        if p1.data.ne(p2.data).sum() > 0:
-            logging.info(False)
-            raise Exception("Not same models after saving and loading!")
-
-    logging.info("Same models after saving and loading!")
-
-    for e in range(10):
-        for data in dataloader:
-            log_ps = new_model.paraphrase_forward_pass(data, train=True)
-            loss = -torch.mean(log_ps, dim=0)
-            new_model.optimizer.zero_grad()
-            loss.backward()
-            logging.info(f"epoch_{e} loss_value:{loss.item()}")
-            new_model.optimizer.step()
-            new_model.scheduler.step(e + epochs)
-
-    logging.info("Testing caching with paraphrases.")
-    dataloader = DataLoader(DictDataset(data), batch_size=len(text), shuffle=False)
-    start_time = time.time()
-    for data in dataloader:
-        logging.info("diverse_beam_search testing.")
-        cached_paraphrases, cached_log_ps = new_model.generate_paraphrases(
-            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=True
-        )
-        logging.info(cached_paraphrases)
-        logging.info(cached_log_ps)
-    end_time = time.time()
-    logging.info(f"Time took after cache: {end_time-start_time}")
-
-    start_time = time.time()
-    for data in dataloader:
-        logging.info("diverse_beam_search testing.")
-        paraphrases, log_ps = new_model.generate_paraphrases(
-            data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=False
-        )
-        logging.info(paraphrases)
-        logging.info(log_ps)
-    end_time = time.time()
-    logging.info(f"Time took without cache: {end_time-start_time}")
-
-    assert paraphrases == cached_paraphrases
-    assert torch.all(log_ps == cached_log_ps)
-
-    start_time = time.time()
-    for i in range(10):
-        for data in dataloader:
-            logging.info("mixed testing.")
-            paraphrases, log_ps = new_model.generate_paraphrases(
-                data, num_return_seq=2, decoding_technique="mixed", use_internal_cache=False
-            )
-            logging.info(paraphrases)
-            logging.info(log_ps)
-
-            logging.info("top p testing.")
-            paraphrases, log_ps = new_model.generate_paraphrases(
-                data, num_return_seq=2, decoding_technique="top_p", use_internal_cache=False
-            )
-            logging.info(paraphrases)
-            logging.info(log_ps)
-
-            logging.info("diverse beam search testing.")
-            paraphrases, log_ps = new_model.generate_paraphrases(
-                data, num_return_seq=2, decoding_technique="diverse_beam_search", use_internal_cache=False
-            )
-            logging.info(paraphrases)
-            logging.info(log_ps)
-    end_time = time.time()
-    logging.info(f"Time took for 10 prediction loops: {end_time-start_time}")
-
-
-def main(argv: Any) -> None:
-    """Example function to launch the train and generate functions."""
-    del argv
-
-    logging.info("Testing the model on gpu!")
-    model = Paraphraser(device="cuda:0")
-    model.to_device()
-    example_test_train_loop(model)
-    del model
-
-
-if __name__ == "__main__":
-    app.run(main)

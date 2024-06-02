@@ -1,5 +1,6 @@
-"""This module implements different metrics used to evaluate the predictions
-for the downstream tasks."""
+"""This module implements different metrics used to evaluate the predictions.
+We implement the PaSSiM metric here.
+"""
 
 from typing import Dict, List
 
@@ -9,6 +10,9 @@ from absl import flags
 from sentence_transformers import SentenceTransformer
 
 from src.model_utils import clear_cache
+from src.general_utils import DictDataset
+from torch.utils.data import DataLoader
+from src.paraphraser import Paraphraser
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
@@ -21,7 +25,7 @@ class QAMetricModel:
 
     model_id = "sentence-transformers/sentence-t5-xxl"
 
-    def __init__(self, device: str = "cuda:0", batch_size: int = 16) -> None:
+    def __init__(self, device: str = "cuda:0", batch_size: int = 16, ) -> None:
         """Save the gpu device and construct the model and cache it."""
         self.device = device
         self.batch_size = batch_size
