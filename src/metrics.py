@@ -9,11 +9,8 @@ import pandas as pd
 import torch
 from absl import flags
 from sentence_transformers import SentenceTransformer
-from torch.utils.data import DataLoader
 
-from src.general_utils import DictDataset
 from src.model_utils import clear_cache
-from src.paraphraser import Paraphraser
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")

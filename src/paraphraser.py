@@ -18,17 +18,21 @@ _PARAPHRASE_MODEL_NAME = "humarin/chatgpt_paraphraser_on_T5_base"
 class Paraphraser(BaseLM):
     """Main class to load a paraphraser or train it."""
 
-    def __init__(self, device: str, seed: int = 42,
-                 paraphrase_cache_capacity: int = 100000,
-                 diverse_beam_temperature: float = 0.7,
-                 diversity_penalty: float = 3.0,
-                 repetition_penalty: float = 10.0,
-                 paraphrase_top_p: float = 0.99,
-                 paraphrase_generation_max_length: int = 1024,
-                 no_repeat_ngram_size: int = 2,
-                 para_checkpoint_name: str = "last",
-                 para_model_path: str = "/tmp",
-                 paraphrase_learning_rate: float = 0.00005) -> None:
+    def __init__(
+        self,
+        device: str,
+        seed: int = 42,
+        paraphrase_cache_capacity: int = 100000,
+        diverse_beam_temperature: float = 0.7,
+        diversity_penalty: float = 3.0,
+        repetition_penalty: float = 10.0,
+        paraphrase_top_p: float = 0.99,
+        paraphrase_generation_max_length: int = 1024,
+        no_repeat_ngram_size: int = 2,
+        para_checkpoint_name: str = "last",
+        para_model_path: str = "/tmp",
+        paraphrase_learning_rate: float = 0.00005,
+    ) -> None:
         super().__init__(device, model_name="paraphraser", seed=seed)
 
         self.paraphrase_cache_capacity = paraphrase_cache_capacity
@@ -41,7 +45,7 @@ class Paraphraser(BaseLM):
         self.para_checkpoint_name = para_checkpoint_name
         self.para_model_path = para_model_path
         self.paraphrase_learning_rate = paraphrase_learning_rate
-        
+
         self.tokenizer = AutoTokenizer.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(_PARAPHRASE_MODEL_NAME)
         self.cache: LruCache = LruCache(capacity=self.paraphrase_cache_capacity, filename=f"{self.para_model_path}/cache.bin")
