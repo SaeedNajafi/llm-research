@@ -40,9 +40,12 @@ function install_package () {
 	if [ "$OS" = "mac" ]; then
 		pip3 install --pre torch torchvision torchaudio torchtext \
 			--extra-index-url https://download.pytorch.org/whl/nightly/cpu
-		python3 -m pip install tensorflow[and-cuda] pip3 install --no-cache-dir tensorboard
+		pip3 install tensorflow[and-cuda]
+		pip3 install --no-cache-dir tensorboard
 		pip3 install --no-cache-dir tensorflow-macos
 		pip3 install -e .'[dev]'
+		pip3 install -U sentence-transformers
+		pip3 install git+https://github.com/huggingface/transformers
 
 	elif [ "$OS" = "vcluster" ]; then
 		pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -53,6 +56,9 @@ function install_package () {
 		pip3 install -e .'[dev]'
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=7 pip3 install --no-cache-dir flash-attn --no-build-isolation
+		pip3 install -U sentence-transformers
+		pip3 install git+https://github.com/huggingface/transformers
+		export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
 
 	elif [ "$OS" = "colab" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
@@ -63,9 +69,7 @@ function install_package () {
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
 	fi
-	pip3 install -U sentence-transformers
-	pip3 install git+https://github.com/huggingface/transformers
-	export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
+
 
 }
 
