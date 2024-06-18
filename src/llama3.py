@@ -3,7 +3,6 @@
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
-from galore_torch import GaLoreAdamW8bit
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import (
@@ -15,6 +14,7 @@ from transformers import (
     PreTrainedTokenizer,
 )
 
+from galore_torch import GaLoreAdamW8bit
 from src.base_lm import BaseLM
 from src.model_utils import llama2_log_of_labels, lm_logits, mlm_log_of_labels
 
@@ -197,7 +197,9 @@ class LlamaQA(BaseLM):
         # required for llama3.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
-    def prepare_text_for_inference(self, texts: List[str], row_ids: List[str], gold_answers: List[str] = None) -> Dict[str, Any]:
+    def prepare_text_for_inference(
+        self, texts: List[str], row_ids: List[str], gold_answers: Optional[List[List[str]]] = None
+    ) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for
         inference."""
         input_encodings_for_generation = self.tokenizer(
