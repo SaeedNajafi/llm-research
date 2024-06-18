@@ -5,11 +5,11 @@ from absl import app, flags
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 
-from src.general_utils import DictDataset, test_loop, white_space_fix, train_loop
+from src.general_utils import DictDataset, test_loop, train_loop, white_space_fix
 
 # Let's generate paraphrases with Llama3.
 from src.llama3 import LlamaQA
-from src.metrics import squad_llama3_metric
+from src.metrics import qa_metric
 from src.model_utils import set_random_seed
 from src.squadv2_llama3_instructions import explanation_icl_input, explanation_instruction, normal_icl_input, normal_instruction
 
@@ -26,7 +26,7 @@ model_path = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-squadv2.0"
 
 def process_squad_dataset(
     split_name: str, llama3_instruction_llama: str, llama3_input_template: str, llama3_output_template: str
-) -> Tuple[List[str], List[str], List[str], List[str]]:
+) -> Tuple[List[str], List[str], List[str], List[List[str]]]:
     """Read and pre-process the squadv2 dataset for my application."""
 
     dataset = load_dataset("rajpurkar/squad_v2", split=split_name)
@@ -66,7 +66,7 @@ def process_squad_dataset(
             user_final_message += f"\nQuestion_{next_example_number}: {question}"
             user_final_message += f"\nExplanations and Thought Process_{next_example_number}: "
         elif FLAGS.experiment_type == "explanation_no_icl":
-            user_final_message = f"Passage: {context}"  
+            user_final_message = f"Passage: {context}"
             user_final_message += f"\nQuestion: {question}"
             user_final_message += "\nExplanations and Thought Process and Final Answer: "
 
@@ -79,7 +79,7 @@ def process_squad_dataset(
             gold_answers = list(set([white_space_fix(answer) for answer in row["answers"]["text"]]))
         else:
             gold_answers = ["<no_answer>"]
-        gold_outputs.append("_@_".join(gold_answers))
+        gold_outputs.append(gold_answers)
         gold_answer = random.choice(gold_answers)
 
         if FLAGS.experiment_type == "normal_icl":
@@ -126,7 +126,7 @@ def no_training_inference_main() -> None:
         model_path=f"{model_path}_{FLAGS.experiment_type}",
         prediction_file_name=FLAGS.output_file,
         test_dataloader=data_loader,
-        metric=squad_llama3_metric,
+        metric=qa_metric,
     )
 
 
@@ -180,7 +180,7 @@ def train_main() -> None:
         max_epochs=10,
         training_steps=10000000,  # not important
         steps_per_checkpoint=10,
-        metric=squad_llama3_metric,
+        metric=qa_metric,
         train_dataloader=train_data_loader,
         eval_dataloader=val_data_loader,
     )
@@ -192,6 +192,7 @@ def main(argv: Any) -> None:
         no_training_inference_main()
     elif FLAGS.run_type == "train":
         train_main()
+
 
 if __name__ == "__main__":
     app.run(main)

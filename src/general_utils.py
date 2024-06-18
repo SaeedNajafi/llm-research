@@ -174,6 +174,9 @@ class DictDataset(Dataset):
         for key, val in self.data.items():
             if isinstance(val[idx], str) or isinstance(val[idx], torch.Tensor):
                 ret[key] = val[idx]
+            elif all(isinstance(item, str) for item in val[idx]):
+                # Pass list of string, as list of string.
+                ret[key] = val[idx]
             else:
                 ret[key] = torch.tensor(val[idx])
         return ret

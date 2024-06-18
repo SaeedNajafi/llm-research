@@ -1,43 +1,73 @@
 """This module implements different metrics used to evaluate the
 predictions."""
 
-from typing import Dict, List
-
 import collections
-import json
-import os
 import re
 import string
-import sys
+from typing import Dict, List
 
-import numpy as np
 import pandas as pd
 import torch
 from absl import flags
+from llm2vec import LLM2Vec
+from peft import PeftModel
 from sentence_transformers import SentenceTransformer
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 from src.model_utils import clear_cache
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
 flags.DEFINE_integer("metric_batch_size", 16, "batch size used for the metric model.")
+flags.DEFINE_string("metric_type", "llm2vec", "llm2vec or sentence-t5 model?")
+
+
+def load_llm2vec(cuda_device: str) -> LLM2Vec:
+    # Loading base llama-3-8b model, along with custom code that enables bidirectional connections in decoder-only
+    # LLMs. MNTP LoRA weights are merged into the base model.
+    tokenizer = AutoTokenizer.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp")
+    config = AutoConfig.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp", trust_remote_code=True)
+    model = AutoModel.from_pretrained(
+        "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+        trust_remote_code=True,
+        config=config,
+        torch_dtype=torch.bfloat16,
+        device_map=cuda_device if torch.cuda.is_available() else "cpu",
+    )
+    model = PeftModel.from_pretrained(
+        model,
+        "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+    )
+    model = model.merge_and_unload()  # This can take several minutes on cpu
+
+    # Loading supervised model. This loads the trained LoRA weights on top of MNTP model.
+    # Hence the final weights are -- Base model + MNTP (LoRA) + supervised (LoRA).
+    model = PeftModel.from_pretrained(model, "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised")
+
+    model = model.eval()
+
+    # Wrapper for encoding and pooling operations
+    l2v = LLM2Vec(model, tokenizer, pooling_mode="mean", max_length=8192)
+
+    return l2v
 
 
 class QAMetricModel:
     """Load and cache a model used for evaluating generative text
     generation."""
 
-    model_id = "sentence-transformers/sentence-t5-xxl"
+    sentence_t5_model_id = "sentence-transformers/sentence-t5-xxl"
 
-    def __init__(
-        self,
-        device: str = "cuda:0",
-        batch_size: int = 16,
-    ) -> None:
+    def __init__(self, device: str = "cuda:0", batch_size: int = 16, metric_type: str = "llm2vec") -> None:
         """Save the gpu device and construct the model and cache it."""
         self.device = device
         self.batch_size = batch_size
-        self.metric_model = SentenceTransformer(self.model_id, device=self.device).eval()
+        self.metric_type = metric_type
+        if self.metric_type == "llm2vec":
+            self.metric_model = load_llm2vec(self.device)
+            self.instruction = "Retrieve Wikipedia passages that answer the question"
+        elif self.metric_type == "sentence_t5":
+            self.metric_model = SentenceTransformer(self.sentence_t5_model_id, device=self.device).eval()
 
     def compute_metric(self, predictions: List[str], references: List[List[str]]) -> float:
         """Compute the metric for the given predictions and multiple
@@ -60,23 +90,33 @@ class QAMetricModel:
             for ref_sub_arr in references_sub_arr:
                 references_sub_arr_flattened.extend(ref_sub_arr)
 
-            prediction_embeddings = self.metric_model.encode(
-                predictions_sub_arr,
-                show_progress_bar=False,
-                batch_size=self.batch_size,
-                device=self.device,
-                normalize_embeddings=True,
-                convert_to_tensor=True,
-            )
+            if self.metric_type == "sentence_t5":
+                prediction_embeddings = self.metric_model.encode(
+                    predictions_sub_arr,
+                    show_progress_bar=False,
+                    batch_size=self.batch_size,
+                    device=self.device,
+                    normalize_embeddings=True,
+                    convert_to_tensor=True,
+                )
 
-            references_embeddings = self.metric_model.encode(
-                references_sub_arr_flattened,
-                show_progress_bar=False,
-                batch_size=self.batch_size,
-                device=self.device,
-                normalize_embeddings=True,
-                convert_to_tensor=True,
-            )
+                references_embeddings = self.metric_model.encode(
+                    references_sub_arr_flattened,
+                    show_progress_bar=False,
+                    batch_size=self.batch_size,
+                    device=self.device,
+                    normalize_embeddings=True,
+                    convert_to_tensor=True,
+                )
+            elif self.metric_type == "llm2vec":
+                predictions_sub_arr_with_queries = [[self.instruction, pred] for pred in predictions_sub_arr]
+                prediction_embeddings_unnormal = self.metric_model.encode(predictions_sub_arr_with_queries)
+
+                ref_sub_arr_flattened_with_queries = [[self.instruction, ref] for ref in references_sub_arr_flattened]
+                references_embeddings_unnormal = self.metric_model.encode(ref_sub_arr_flattened_with_queries)
+                prediction_embeddings = torch.nn.functional.normalize(prediction_embeddings_unnormal, p=2, dim=1)
+                references_embeddings = torch.nn.functional.normalize(references_embeddings_unnormal, p=2, dim=1)
+
             dot_products = torch.matmul(prediction_embeddings, references_embeddings.t())
             score_collector = torch.zeros_like(dot_products)
             i = 0
@@ -87,7 +127,7 @@ class QAMetricModel:
                 i += 1
                 j += j_len
 
-            all_scores.append(dot_products * score_collector)
+            all_scores.append(torch.sum(dot_products * score_collector, dim=1))
         return (
             torch.stack(all_scores, dim=0)
             .squeeze()
@@ -100,59 +140,90 @@ class QAMetricModel:
 qa_metric_model = None
 
 
-def postprocess_label(label: str) -> str:
-    label = label.removesuffix("</s>")
-    label = label.removeprefix("<s>")
-    label = label.strip()
-    return label
-
-def postprocess_qa(label: str) -> str:
-    label = str(label)
-    label = label.lower()
-    label = label.replace("\n", " ")
-    label = label.removesuffix("</s>")
-    label = label.removeprefix("<s>")
-    label = label.removeprefix("\n")
-    label = label.removesuffix("\n")
-    label = label.removeprefix(".")
-    label = label.removesuffix(".")
-    label = label.removeprefix("answer:")
-    label = label.removeprefix(",")
-    label = label.strip()
-    return label
-
-def remove_articles(text):
+def remove_articles(text: str) -> str:
     regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
     return re.sub(regex, " ", text)
 
-def white_space_fix(text):
+
+def white_space_fix(text: str) -> str:
     return " ".join(text.split())
 
-def remove_punc(text):
+
+def remove_punc(text: str) -> str:
     exclude = set(string.punctuation)
     return "".join(ch for ch in text if ch not in exclude)
 
-def lower(text):
+
+def lower(text: str) -> str:
     return text.lower()
 
-def normalize_answer(s):
+
+def postprocess_qa(txt: str) -> str:
+    txt = str(txt)
+    txt = txt.removeprefix("assistant\n\n")
+    txt = txt.removeprefix(
+        "The shortest continuous text span from the passage that serves as an answer to the given question is:\n\n"
+    )
+    txt = txt.removeprefix(
+        "The shortest continuous text span from the passage that serves as an answer to the question is:\n\n"
+    )
+    txt = txt.removeprefix("The shortest continuous text span that serves as an answer to the given question is:\n\n")
+    txt = txt.removeprefix("Based on the passage, the correct answer is")
+    txt = txt.removeprefix("The correct answer is")
+    txt = txt.removeprefix("According to the passage,")
+    txt = txt.removeprefix("Here is the answer:")
+    txt = txt.removeprefix("the correct answer is")
+    try:
+        txt = txt.split("Final Answer: ")[1]
+    except Exception:
+        try:
+            txt = txt.split("Answer: ")[1]
+        except Exception:
+            pass
+    txt = txt.lower()
+    txt = txt.replace("\n", " ")
+    txt = txt.removesuffix("</s>")
+    txt = txt.removeprefix("<s>")
+    txt = txt.removeprefix("\n")
+    txt = txt.removesuffix("\n")
+    txt = txt.removeprefix(".")
+    txt = txt.removeprefix(":")
+    txt = txt.removesuffix(".")
+    txt = txt.removeprefix("answer:")
+    txt = txt.removeprefix(",")
+    txt = txt.strip()
+    if ("<no_answer>" in txt) or ("no_answer" in txt) or ("noanswer" in txt):
+        txt = "This question is not answerable."
+    return txt
+
+
+def normalize_answer(text: str) -> str:
     """Lower text and remove punctuation, articles and extra whitespace."""
-    return white_space_fix(remove_articles(remove_punc(postprocess_qa(s))))
+    return white_space_fix(remove_articles(remove_punc(postprocess_qa(text))))
 
-def get_tokens(s):
-    if not s:
+
+def get_tokens(text: str) -> List[str]:
+    if not text:
         return []
-    return normalize_answer(s).split()
+    return normalize_answer(text).split()
 
-def compute_exact(a_gold, a_pred):
+
+def compute_exact(a_gold: str, a_pred: str) -> int:
     return int(normalize_answer(a_gold) == normalize_answer(a_pred))
 
-def compute_f1_precision_recall(a_gold, a_pred):
+
+def compute_f1_precision_recall(a_gold: str, a_pred: str) -> List[float]:
     gold_toks = get_tokens(a_gold)
     pred_toks = get_tokens(a_pred)
     common = collections.Counter(gold_toks) & collections.Counter(pred_toks)
     num_same = sum(common.values())
-    if len(gold_toks) == 0 or len(pred_toks) == 0:
+    if gold_toks == ["this", "question", "is", "not", "answerable"] or pred_toks == [
+        "this",
+        "question",
+        "is",
+        "not",
+        "answerable",
+    ]:
         # If either is no-answer, then F1 is 1 if they agree, 0 otherwise
         return [int(gold_toks == pred_toks), int(gold_toks == pred_toks), int(gold_toks == pred_toks)]
     if num_same == 0:
@@ -162,98 +233,61 @@ def compute_f1_precision_recall(a_gold, a_pred):
     f1 = (2 * precision * recall) / (precision + recall)
     return [f1, precision, recall]
 
-def qa_metric(prediction_file: str) -> Dict[str, float]:
+
+def qa_metric_sentence_similarity(prediction_file: str) -> Dict[str, float]:
     """Compute the metric for the qa task."""
     global qa_metric_model
     if qa_metric_model is None:
-        qa_metric_model = QAMetricModel(device=FLAGS.metric_device, batch_size=FLAGS.metric_batch_size)
+        qa_metric_model = QAMetricModel(
+            device=FLAGS.metric_device, batch_size=FLAGS.metric_batch_size, metric_type=FLAGS.metric_type
+        )
 
     df = pd.read_csv(prediction_file, delimiter=",")
-
-    gold_answers = [postprocess_qa(label) for label in df["gold_class"].tolist()]
-
-    multiple_gold_answers = []
-    for answer in gold_answers:
-        multiple_gold_answers.append(answer.split("[<@>]"))
-
+    gold_answers = [[normalize_answer(ans) for ans in answers] for answers in df["gold_answer"].tolist()]
     return_metrics: Dict[str, float] = {}
-    metrics = {
-        "potential_class": "best_paraphrase_score",
-        "original_potential_class": "original_input_score",
-        "all_potential_class": "best_paraphrase+original_input_score",
-    }
-
+    metrics = {"potential_answer": "sentence_similarity"}
     for metric_column, metric in metrics.items():
         if metric_column in df.columns:
-            predictions = [postprocess_qa(pred) for pred in df[metric_column].tolist()]
-            scores = qa_metric_model.compute_metric(predictions, multiple_gold_answers)
+            predictions = [normalize_answer(pred) for pred in df[metric_column].tolist()]
+            scores = qa_metric_model.compute_metric(predictions, gold_answers)
             avg_score = torch.mean(scores, dim=0).item()
             return_metrics[metric] = avg_score
 
     return return_metrics
 
 
-def compute_dev_results(predictions, gold_answers):
+def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     # Read gold-data
+    df = pd.read_csv(prediction_file, delimiter=",")
+    gold_answers = [[normalize_answer(ans) for ans in answers] for answers in df["gold_answer"].tolist()]
     exact_scores = []
     f1_scores = []
     precision_scores = []
     recall_scores = []
-    for idx, answers in enumerate(gold_answers):
-        per_row_answers = [a for a in answers if normalize_answer(a)]
-        if per_row_answers == ["<no_answer>"]:
-            per_row_answers = [""]
-        a_pred = predictions[idx]
-        if a_pred == "<no_answer>":
-            a_pred = ""
+    return_metrics: Dict[str, float] = {}
+    metrics = {"potential_answer": "squadv2_metrics"}
+    for metric_column, metric in metrics.items():
+        if metric_column in df.columns:
+            predictions = [normalize_answer(pred) for pred in df[metric_column].tolist()]
+            for idx, prediction in enumerate(predictions):
+                gold_answer = gold_answers[idx]
+                # Take max over all gold answers
+                exact_scores.append(max(compute_exact(a, prediction) for a in gold_answer))
+                f1_scores.append(max(compute_f1_precision_recall(a, prediction)[0] for a in gold_answer))
+                precision_scores.append(max(compute_f1_precision_recall(a, prediction)[1] for a in gold_answer))
+                recall_scores.append(max(compute_f1_precision_recall(a, prediction)[2] for a in gold_answer))
 
-        # Take max over all gold answers
-        exact_scores.append(max(compute_exact(a, a_pred) for a in gold_answers))
-        f1_scores.append(max(compute_f1_precision_recall(a, a_pred)[0] for a in gold_answers))
-        precision_scores.append(max(compute_f1_precision_recall(a, a_pred)[1] for a in gold_answers))
-        recall_scores.append(max(compute_f1_precision_recall(a, a_pred)[2] for a in gold_answers))
+            total = len(exact_scores)
+            return_metrics[f"{metric}_exact"] = 100.0 * sum(exact_scores) / total
+            return_metrics[f"{metric}_f1"] = 100.0 * sum(f1_scores) / total
+            return_metrics[f"{metric}_precision"] = 100.0 * sum(precision_scores) / total
+            return_metrics[f"{metric}_recall"] = 100.0 * sum(recall_scores) / total
+    return return_metrics
 
-    total = len(exact_scores)
-    scores = collections.OrderedDict(
-        [
-            ("exact", 100.0 * sum(exact_scores.values()) / total),
-            ("f1", 100.0 * sum(f1_scores.values()) / total),
-            ("precision", 100.0 * sum(precision_scores.values()) / total),
-            ("recall", 100.0 * sum(recall_scores.values()) / total),
-            ("total", total),
-        ]
-    )
+
+def qa_metric(prediction_file: str) -> Dict[str, float]:
+    """Combine and use all the metrics for the qa task."""
+    scores = qa_metric_sentence_similarity(prediction_file)
+    other_scores = qa_metric_squadv2_metrics(prediction_file)
+    scores.update(other_scores)
     return scores
-
-
-def squad_llama3_metric(prediction_file: str) -> Dict[str, float]:
-    df = pd.read_csv(prediction_file, delimiter=",")
-    gold_answers = [gold_answer.split("_@_") for gold_answer in df["gold_answer"].tolist()]
-    predictions = df["potential_answer"].tolist()
-    predictions_new = {}
-    for pred in predictions:
-        a_pred = pred
-        a_pred = a_pred.removeprefix("assistant\n\n")
-        a_pred = a_pred.removeprefix("The shortest continuous text span from the passage that serves as an answer to the given question is:\n\n")
-        a_pred = a_pred.removeprefix("The shortest continuous text span from the passage that serves as an answer to the question is:\n\n")
-        a_pred = a_pred.removeprefix("The shortest continuous text span that serves as an answer to the given question is:\n\n")
-        a_pred = a_pred.removeprefix("Based on the passage, the correct answer is")
-        a_pred = a_pred.removeprefix("The correct answer is")
-        a_pred = a_pred.removeprefix("According to the passage,")
-        a_pred = a_pred.removeprefix(":")
-        a_pred = a_pred.removeprefix("Here is the answer:")
-        a_pred = a_pred.removeprefix("the correct answer is")
-        a_pred = white_space_fix(a_pred)
-        try:
-            a_pred = a_pred.split("Final Answer_11: ")[1]
-        except:
-            try:
-                a_pred = a_pred.split("Answer: ")[1]
-            except:
-                a_pred = a_pred
-
-        if "<no_answer>" in a_pred:
-            a_pred = "<no_answer>"
-
-        predictions_new.append(a_pred)
-    
