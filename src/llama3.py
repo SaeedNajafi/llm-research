@@ -21,6 +21,12 @@ from src.utils import fsdp_auto_wrap_policy
 from src.utils.fsdp_utils import hsdp_device_mesh
 from src.utils.train_utils import clear_gpu_cache, freeze_transformer_layers, get_policies, print_model_size
 
+# Make sure we have some tokens defined for the LM, if not defined in the model.
+# Specific for Llama3
+_EXTRA_TOKENS = {
+    "pad_token": "<|reserved_special_token_0|>",
+}
+
 
 class Llama3(torch.nn.Module):
     """Class to implement Llama3."""
@@ -91,13 +97,27 @@ class Llama3(torch.nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(
             train_config.model_name if train_config.tokenizer_name == "" else train_config.tokenizer_name, padding_side="left"
         )
-        self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        self.tokenizer.add_special_tokens(_EXTRA_TOKENS)
 
         # If there is a mismatch between tokenizer vocab size and embedding matrix,
         # throw a warning and then expand the embedding matrix
         if len(self.tokenizer) > model.get_input_embeddings().weight.shape[0]:
             print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
-            model.resize_token_embeddings(len(self.tokenizer))
+            if torch.cuda.is_available():
+                # extend embeddings to a multiple so we use Tensor cores
+                multiple = 64 if "A100" in torch.cuda.get_device_name() else 8
+                model.resize_token_embeddings(len(self.tokenizer), pad_to_multiple_of=multiple)
+            else:
+                raise Exception("No CUDA Found!")
+
+        # re-define token ids for the model.
+        for extra_token_key, extra_token_val in _EXTRA_TOKENS.items():
+            extra_token_id = self.tokenizer.convert_tokens_to_ids([extra_token_val])[0]
+            model.config.__setattr__(f"{extra_token_key}_id", extra_token_id)
+            model.generation_config.__setattr__(f"{extra_token_key}_id", extra_token_id)
+
+        # required for llama3.
+        self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
         print_model_size(model, train_config, self.rank if train_config.enable_fsdp else 0)
 
@@ -113,10 +133,10 @@ class Llama3(torch.nn.Module):
             # Load the pre-trained peft model checkpoint and setup its configuration
             if train_config.from_peft_checkpoint:
                 model = PeftModel.from_pretrained(model, train_config.from_peft_checkpoint, is_trainable=True)
-                peft_config = model.peft_config()
+                self.peft_config = model.peft_config()
             # Generate the peft config and start fine-tuning from original model
             else:
-                peft_config = LoraConfig(
+                self.peft_config = LoraConfig(
                     task_type=TaskType.CAUSAL_LM,
                     inference_mode=False,
                     r=lora_config.lora_r,
@@ -126,7 +146,7 @@ class Llama3(torch.nn.Module):
                     init_lora_weights=True,
                     target_modules=lora_config.lora_target_modules,
                 )
-                model = get_peft_model(model, peft_config)
+                model = get_peft_model(model, self.peft_config)
 
             model.print_trainable_parameters()
 
@@ -143,11 +163,12 @@ class Llama3(torch.nn.Module):
                 freeze_transformer_layers(model, train_config.num_freeze_layers)
 
             mixed_precision_policy, wrapping_policy = get_policies(fsdp_config, self.rank)
-            my_auto_wrapping_policy = fsdp_auto_wrap_policy(LlamaDecoderLayer)
+            my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, LlamaDecoderLayer)
 
-            self.device_id = self.local_rank
             if torch.cuda.is_available():
                 self.device_id = torch.cuda.current_device()
+
+            self.loss_func.to(self.device_id)
 
             model = FSDP(
                 model,
@@ -171,13 +192,11 @@ class Llama3(torch.nn.Module):
         elif not train_config.quantization and not train_config.enable_fsdp:
             if torch.cuda.is_available():
                 model.to("cuda")
+                self.loss_func.to("cuda")
 
         self.model = model
         self.optimizer = AdamW8bit(self.model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
-        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=train_config.T_0, eta_min=train_config.lr / 5.0)
-
-        # required for llama3.
-        self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=train_config.T_0, eta_min=train_config.eta_min)
 
     def prepare_text_for_inference(
         self, texts: List[str], row_ids: List[str], gold_answers: Optional[List[List[str]]] = None
@@ -306,7 +325,7 @@ class Llama3(torch.nn.Module):
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Dict[str, str]]:
         """The main prediction loop."""
         answers, log_ps = self.generation_pass(batch)
-        log_ps = log_ps.cpu().detach().numpy()
+        log_ps = log_ps.detach().cpu().numpy()
         for idx, answer in enumerate(answers):
             output_row = {"potential_answer": answer, "prediction_score": log_ps[idx], "row_id": batch["row_ids"][idx]}
             if "gold_answers" in batch:
