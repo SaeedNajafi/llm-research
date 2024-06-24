@@ -187,13 +187,16 @@ normal_instruction = """This task is about writing a correct answer for the read
             or have incomplete justification. If you cannot find the answer from the passage for the given\
                 question, then generate the <no_answer> tag as the final answer."""
 
-normal_icl_input = white_space_fix(f"{normal_instruction}")
+normal_instruction = white_space_fix(normal_instruction)
+
+normal_icl_input = normal_instruction
 for idx, context_example in enumerate(contexts):
     normal_icl_input += f"\n\nPassage_{idx+1}: {white_space_fix(context_example)}"
     normal_icl_input += f"\nQuestion_{idx+1}: {white_space_fix(questions[idx])}"
     normal_icl_input += f"\nFinal Answer_{idx+1}: {white_space_fix(gold_answers[idx])}"
 
-explanation_icl_input = white_space_fix(f"{explanation_instruction}")
+explanation_instruction = white_space_fix(explanation_instruction)
+explanation_icl_input = explanation_instruction
 for idx, context_example in enumerate(contexts):
     explanation_icl_input += f"\n\nPassage_{idx+1}: {white_space_fix(context_example)}"
     explanation_icl_input += f"\nQuestion_{idx+1}: {white_space_fix(questions[idx])}"
