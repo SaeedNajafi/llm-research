@@ -17,7 +17,7 @@ from transformers import AutoConfig, AutoModel, AutoTokenizer
 from src.model_utils import clear_cache
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
+flags.DEFINE_string("metric_device", "cuda:1", "The device per node to calculate the metric.")
 flags.DEFINE_integer("metric_batch_size", 16, "batch size used for the metric model.")
 flags.DEFINE_string("metric_type", "llm2vec", "llm2vec or sentence-t5 model?")
 

@@ -1,8 +1,9 @@
+import ast
 import random
 from typing import Any, List, Tuple
 
+import pandas as pd
 from absl import app, flags
-from datasets import load_dataset
 from torch.utils.data import DataLoader
 
 from src.general_utils import DictDataset, test_loop, train_loop, white_space_fix
@@ -16,6 +17,11 @@ from src.squadv2_llama3_instructions import explanation_icl_input, explanation_i
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("output_file", "a name", "the name of file to read data to.")
+
+flags.DEFINE_string("train_file_name", "a name", "the name of train file.")
+flags.DEFINE_string("dev_file_name", "a name", "the name of dev file.")
+flags.DEFINE_string("test_file_name", "a name", "the name of test file.")
+
 flags.DEFINE_string("experiment_type", "normal_icl", "Normal few-shot learning without explanations.")
 flags.DEFINE_string("run_type", "inference", "inference or different types of training.")
 
@@ -25,11 +31,11 @@ model_path = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-squadv2.0"
 
 
 def process_squad_dataset(
-    split_name: str, llama3_instruction_llama: str, llama3_input_template: str, llama3_output_template: str
+    file_name: str, llama3_instruction_llama: str, llama3_input_template: str, llama3_output_template: str
 ) -> Tuple[List[str], List[str], List[str], List[List[str]]]:
     """Read and pre-process the squadv2 dataset for my application."""
 
-    dataset = load_dataset("rajpurkar/squad_v2", split=split_name)
+    dataset = pd.read_csv(file_name, sep="\t").to_dict(orient="records")
 
     if FLAGS.experiment_type == "normal_icl":
         instruction = normal_icl_input
@@ -50,9 +56,14 @@ def process_squad_dataset(
     squad_outputs = []
     gold_outputs = []
     squad_ids = []
+    idx = 0
     for row in dataset:
-        context = white_space_fix(row["context"])
-        question = white_space_fix(row["question"])
+        idx += 1
+        context = row["context"]
+        question = row["question"]
+        gold_answers = ast.literal_eval(row["answers"])
+        context = white_space_fix(context)
+        question = white_space_fix(question)
         if FLAGS.experiment_type == "normal_icl":
             user_final_message = f"Passage_{next_example_number}: {context}"
             user_final_message += f"\nQuestion_{next_example_number}: {question}"
@@ -73,12 +84,8 @@ def process_squad_dataset(
         llama3_input = llama3_input_template.format(input=user_final_message)
         squad_input = f"{llama3_instruction}{llama3_input}"
         squad_inputs.append(squad_input)
-        squad_ids.append(row["id"])
+        squad_ids.append(str(idx))
 
-        if row["answers"]["text"]:
-            gold_answers = list(set([white_space_fix(answer) for answer in row["answers"]["text"]]))
-        else:
-            gold_answers = ["<no_answer>"]
         gold_outputs.append(gold_answers)
         gold_answer = random.choice(gold_answers)
 
@@ -110,7 +117,7 @@ def no_training_inference_main() -> None:
     model.to_device()
 
     squad_inputs, squad_ids, _, gold_outputs = process_squad_dataset(
-        split_name="validation",
+        file_name=FLAGS.test_file_name,
         llama3_instruction_llama=model.llama3_instruction_llama,
         llama3_input_template=model.llama3_input_template,
         llama3_output_template=model.llama3_output_template,
@@ -149,8 +156,8 @@ def train_main() -> None:
 
     model.to_device()
 
-    train_squad_inputs, train_squad_ids, train_squad_outputs, _ = process_squad_dataset(
-        split_name="train",
+    train_squad_inputs, train_squad_ids, train_squad_outputs, train_gold_outputs = process_squad_dataset(
+        file_name=FLAGS.train_file_name,
         llama3_instruction_llama=model.llama3_instruction_llama,
         llama3_input_template=model.llama3_input_template,
         llama3_output_template=model.llama3_output_template,
@@ -160,8 +167,8 @@ def train_main() -> None:
     train_dataset = DictDataset(train_data)
     train_data_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 
-    val_squad_inputs, val_squad_ids, _, val_gold_outputs = process_squad_dataset(
-        split_name="validation",
+    val_squad_inputs, val_squad_ids, val_squad_outputs, val_gold_outputs = process_squad_dataset(
+        file_name=FLAGS.dev_file_name,
         llama3_instruction_llama=model.llama3_instruction_llama,
         llama3_input_template=model.llama3_input_template,
         llama3_output_template=model.llama3_output_template,
@@ -176,7 +183,7 @@ def train_main() -> None:
         model=model,
         mode="train",
         model_path=f"{model_path}_{FLAGS.run_type}_{FLAGS.experiment_type}",
-        metric_to_save="f1",
+        metric_to_save="sentence_similarity",
         max_epochs=10,
         training_steps=10000000,  # not important
         steps_per_checkpoint=10,

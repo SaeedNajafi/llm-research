@@ -3,8 +3,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-gpu=4
-#SBATCH --mem=16G
-#SBATCH --gres=gpu:1
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:2
 #SBATCH --output=llama3-qa-inference-squad.%j.out
 #SBATCH --error=llama3-qa-inference-squad.%j.err
 #SBATCH --partition=a40
@@ -28,4 +28,8 @@ export XDG_RUNTIME_DIR=""
 python3 src/qa_llama3_squad.py \
     --output_file=${OUTPUT_FILE} \
     --experiment_type=${EXP_TYPE} \
-    --run_type=${RUN_TYPE}
+    --run_type=${RUN_TYPE} \
+    --metric_type="llm2vec" \
+    --train_file_name="./notebooks/16-shot-datasets/squad/16-13-train.tsv" \
+    --dev_file_name="./notebooks/16-shot-datasets/squad/16-13-dev.tsv" \
+    --test_file_name="./notebooks/16-shot-datasets/squad/original_validation.tsv"
