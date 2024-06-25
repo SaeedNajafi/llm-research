@@ -21,13 +21,13 @@ flags.DEFINE_string("output_file", "a name", "the name of file to read data to."
 flags.DEFINE_string("train_file_name", "a name", "the name of train file.")
 flags.DEFINE_string("dev_file_name", "a name", "the name of dev file.")
 flags.DEFINE_string("test_file_name", "a name", "the name of test file.")
+flags.DEFINE_string("model_path", "/scratch/ssd004/scratch/snajafi/checkpoints", "the main initial folder for the model")
 
 flags.DEFINE_string("experiment_type", "normal_icl", "Normal few-shot learning without explanations.")
 flags.DEFINE_string("run_type", "inference", "inference or different types of training.")
 
 
 train_batch_size = 2
-model_path = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-squadv2.0"
 
 
 def process_squad_dataset(
@@ -86,7 +86,7 @@ def process_squad_dataset(
         squad_inputs.append(squad_input)
         squad_ids.append(str(idx))
 
-        gold_outputs.append(gold_answers)
+        gold_outputs.append("_@_".join(gold_answers))
         gold_answer = random.choice(gold_answers)
 
         if FLAGS.experiment_type == "normal_icl":
@@ -105,12 +105,12 @@ def no_training_inference_main() -> None:
 
     if FLAGS.experiment_type in ["normal_no_icl", "explanation_no_icl"]:
         model = LlamaQA(
-            device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=2048 - 1024, lm_output_max_length=1024
+            mode="test", device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=2048 - 1024, lm_output_max_length=1024
         )
         eval_batch_size = 16
     else:
         model = LlamaQA(
-            device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=8192 - 1024, lm_output_max_length=1024
+            mode="test", device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=8192 - 1024, lm_output_max_length=1024
         )
         eval_batch_size = 4
 
@@ -130,7 +130,7 @@ def no_training_inference_main() -> None:
     test_loop(
         model=model,
         mode="test",
-        model_path=f"{model_path}_{FLAGS.experiment_type}",
+        model_path=f"{FLAGS.model_path}_{FLAGS.experiment_type}",
         prediction_file_name=FLAGS.output_file,
         test_dataloader=data_loader,
         metric=qa_metric,
@@ -139,17 +139,18 @@ def no_training_inference_main() -> None:
 
 def train_main() -> None:
 
+    model_path = f"{FLAGS.model_path}_{FLAGS.run_type}_{FLAGS.experiment_type}"
     # Create model.
     set_random_seed(42)
     if FLAGS.experiment_type in ["normal_no_icl"]:
         model = LlamaQA(
-            device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=2048 - 1024, lm_output_max_length=1024
+            mode="train", device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.01, lm_input_max_length=1024 - 256, lm_output_max_length=256
         )
         eval_batch_size = 16
         train_batch_size = 4
     else:
         model = LlamaQA(
-            device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=8192 - 1024, lm_output_max_length=1024
+            mode="train", device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=1024 - 256, lm_output_max_length=256
         )
         eval_batch_size = 4
         train_batch_size = 1
@@ -164,6 +165,7 @@ def train_main() -> None:
     )
 
     train_data = model.prepare_text_for_train(train_squad_inputs, train_squad_outputs, train_squad_ids)
+    max_length = max([len(lst) for lst in train_data["lm_input_ids_for_train"]])
     train_dataset = DictDataset(train_data)
     train_data_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 
@@ -182,16 +184,56 @@ def train_main() -> None:
     train_loop(
         model=model,
         mode="train",
-        model_path=f"{model_path}_{FLAGS.run_type}_{FLAGS.experiment_type}",
+        model_path=model_path,
         metric_to_save="sentence_similarity",
         max_epochs=10,
         training_steps=10000000,  # not important
-        steps_per_checkpoint=10,
+        steps_per_checkpoint=32,
         metric=qa_metric,
         train_dataloader=train_data_loader,
         eval_dataloader=val_data_loader,
     )
 
+    # Re-create and re-load the best saved model.
+    set_random_seed(42)
+    if FLAGS.experiment_type in ["normal_no_icl"]:
+        model = LlamaQA(
+            mode="test", device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.01, lm_input_max_length=1024 - 256, lm_output_max_length=256
+        )
+        eval_batch_size = 16
+        train_batch_size = 4
+    else:
+        model = LlamaQA(
+            mode="test", device="cuda:0", seed=42, lm_top_p=0.9, temperature=0.6, lm_input_max_length=1024 - 256, lm_output_max_length=256
+        )
+        eval_batch_size = 4
+        train_batch_size = 1
+
+    model.to_device()
+    # Run on the test data.
+    model.load_from_checkpoint(model_path, "best_step", peft_load=True, is_trainable=False)
+
+
+
+    squad_inputs, squad_ids, _, gold_outputs = process_squad_dataset(
+        file_name=FLAGS.test_file_name,
+        llama3_instruction_llama=model.llama3_instruction_llama,
+        llama3_input_template=model.llama3_input_template,
+        llama3_output_template=model.llama3_output_template,
+    )
+    data = model.prepare_text_for_inference(squad_inputs, row_ids=squad_ids, gold_answers=gold_outputs)
+    dataset = DictDataset(data)
+    data_loader = DataLoader(dataset, batch_size=eval_batch_size, shuffle=False)
+
+    # Run on the test data.
+    test_loop(
+        model=model,
+        mode="test",
+        model_path=model_path,
+        prediction_file_name=FLAGS.output_file,
+        test_dataloader=data_loader,
+        metric=qa_metric,
+    )
 
 def main(argv: Any) -> None:
     del argv

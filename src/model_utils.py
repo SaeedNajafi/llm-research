@@ -1,9 +1,7 @@
-import gc
 import os
 import random
 
 import numpy
-import tensorflow as tf
 import torch
 
 
@@ -25,13 +23,6 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-def clear_cache() -> None:
-    """Clean unused GPU Cache!"""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
-
-
 def optimizer_to(optim: torch.optim.Optimizer, device: str) -> None:
     """Move the optimizer to a specific device."""
     for param in optim.state.values():
@@ -46,6 +37,30 @@ def optimizer_to(optim: torch.optim.Optimizer, device: str) -> None:
                     subparam.data = subparam.data.to(device)
                     if subparam._grad is not None:
                         subparam._grad.data = subparam._grad.data.to(device)
+
+
+def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+    """Compute the actual log of labels given pre-computed logits.
+
+    This function is also useful for both Roberta model and getting
+    generation logits for sampling methods.
+    """
+    log_p = -loss_func(
+        logits.view(-1, logits.size(-1)),
+        labels.view(-1),
+    )
+
+    batch_size, sequence_length, vocab_size = logits.size()
+
+    # compute per-token log probability in a sequence.
+    log_p = log_p.view(batch_size, sequence_length)
+
+    # non-masked tokens have index -100 in huggingface.
+    good_log_p = log_p.masked_fill(labels == -100, 0.0)
+
+    # good_log_p now has the log probability of the output
+    # sequence tokens corresponding to the labels at the [MASK] location.
+    return torch.sum(good_log_p, dim=1)
 
 
 def encoder_decoder_log_of_labels(
@@ -73,72 +88,17 @@ def encoder_decoder_log_of_labels(
         decoder_input_ids=shifted_labels,
         labels=None,
     )
-
-    log_p = -loss_func(
-        output.logits.view(-1, output.logits.size(-1)),
-        labels.view(-1),
-    )
-    batch_size, sequence_length, vocab_size = output.logits.size()
-    # compute per-token log probability in a sequence.
-    # log_p has log probabilities for the following target output: [pos, it, ive]
-    log_p = log_p.view(batch_size, sequence_length)
-
-    # pad tokens have index -100 in huggingface.
-    good_log_p = log_p.masked_fill_(labels == -100, 0.0)
-
-    # good_log_p now has the log probability of the output sequence tokens.
-    # sum over the sequence length to compute the log probability for a full sequence.
-    return torch.sum(good_log_p, dim=1).squeeze()
+    return log_of_labels(output.logits, labels, loss_func)
 
 
-def mlm_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
-    """Compute the actual log of labels given pre-computed logits.
-
-    This function is also useful for both Roberta model and getting
-    generation logits for sampling methods.
-    """
-
-    log_p = -loss_func(
-        logits.view(-1, logits.size(-1)),
-        labels.view(-1),
-    )
-
-    batch_size, sequence_length, vocab_size = logits.size()
-
-    # compute per-token log probability in a sequence.
-    log_p = log_p.view(batch_size, sequence_length)
-
-    # non-masked tokens have index -100 in huggingface.
-    good_log_p = log_p.masked_fill(labels == -100, 0.0)
-
-    # good_log_p now has the log probability of the output
-    # sequence tokens corresponding to the labels at the [MASK] location.
-    return torch.sum(good_log_p, dim=1)
-
-
-def llama2_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+def llama_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits."""
 
     # Shift so that tokens < n predict n
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
-    shift_logits_flattened = shift_logits.view(-1, shift_logits.size(-1))
-    shift_labels_flattened = shift_labels.view(-1)
-    log_p = -loss_func(
-        shift_logits_flattened,
-        shift_labels_flattened,
-    )
 
-    batch_size, sequence_length, vocab_size = shift_logits.size()
-
-    # compute per-token log probability in a sequence.
-    log_p = log_p.view(batch_size, sequence_length)
-
-    # non-masked tokens have index -100 in huggingface.
-    good_log_p = log_p.masked_fill_(shift_labels == -100, 0.0)
-
-    # good_log_p now has the log probability of the output labels
-    return torch.sum(good_log_p, dim=1)
+    return log_of_labels(shift_logits, shift_labels, loss_func)
 
 
 def lm_logits(
@@ -170,9 +130,6 @@ def set_random_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-    tf.random.set_seed(seed)
-    tf.experimental.numpy.random.seed(seed)
 
     os.environ["PYTHONHASHSEED"] = str(seed)
     os.environ["TF_CUDNN_DETERMINISTIC"] = "1"

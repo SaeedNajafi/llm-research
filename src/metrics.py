@@ -4,17 +4,17 @@ predictions."""
 import collections
 import re
 import string
-from typing import Dict, List
+from typing import Dict, List, Any
 
 import pandas as pd
 import torch
-from absl import flags
+from absl import flags, app
 from llm2vec import LLM2Vec
 from peft import PeftModel
 from sentence_transformers import SentenceTransformer
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-from src.model_utils import clear_cache
+from src.utils.train_utils import clear_gpu_cache
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:1", "The device per node to calculate the metric.")
@@ -75,7 +75,7 @@ class QAMetricModel:
         all_scores = []
         num_chunks = max(len(predictions) // self.batch_size, 1)
         for chunk_i in range(num_chunks):
-            clear_cache()
+            clear_gpu_cache(rank=-1)
 
             if (chunk_i + 1) * self.batch_size <= len(predictions):
                 predictions_sub_arr = predictions[chunk_i * self.batch_size : (chunk_i + 1) * self.batch_size]
@@ -243,7 +243,7 @@ def qa_metric_sentence_similarity(prediction_file: str) -> Dict[str, float]:
         )
 
     df = pd.read_csv(prediction_file, delimiter=",")
-    gold_answers = [[normalize_answer(ans) for ans in answers] for answers in df["gold_answer"].tolist()]
+    gold_answers = [[normalize_answer(str(ans)) for ans in str(answers).split("_@_")] for answers in df["gold_answer"].tolist()]
     return_metrics: Dict[str, float] = {}
     metrics = {"potential_answer": "sentence_similarity"}
     for metric_column, metric in metrics.items():
@@ -259,7 +259,7 @@ def qa_metric_sentence_similarity(prediction_file: str) -> Dict[str, float]:
 def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     # Read gold-data
     df = pd.read_csv(prediction_file, delimiter=",")
-    gold_answers = [[normalize_answer(ans) for ans in answers] for answers in df["gold_answer"].tolist()]
+    gold_answers = [[normalize_answer(str(ans)) for ans in str(answers).split("_@_")] for answers in df["gold_answer"].tolist()]
     exact_scores = []
     f1_scores = []
     precision_scores = []
@@ -291,3 +291,13 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
     other_scores = qa_metric_squadv2_metrics(prediction_file)
     scores.update(other_scores)
     return scores
+
+
+def main(argv: Any) -> None:
+    """Test the metrics."""
+    del argv
+    print(qa_metric("/scratch/ssd004/scratch/snajafi/checkpoints/llama3-squadv2.0_train_normal_no_icl/llama3.squad2.1024-13.original_validation.results.csv"))
+    # print(qa_metric("./src/metrics_test_file.csv"))
+    
+if __name__ == "__main__":
+    app.run(main)

@@ -193,6 +193,9 @@ class Llama3(torch.nn.Module):
             if torch.cuda.is_available():
                 model.to("cuda")
                 self.loss_func.to("cuda")
+                self.device_id = "cuda"
+            else:
+                self.device_id = "cpu"
 
         self.model = model
         self.optimizer = AdamW8bit(self.model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
@@ -322,13 +325,14 @@ class Llama3(torch.nn.Module):
         # Average log probs per token (length normalization).
         return predictions_str, final_log_ps / actual_lens
 
-    def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Dict[str, str]]:
+    def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
         answers, log_ps = self.generation_pass(batch)
-        log_ps = log_ps.detach().cpu().numpy()
+        loss = -torch.mean(log_ps, dim=0).detach().float()
+        numpy_log_ps = log_ps.detach().cpu().numpy()
         for idx, answer in enumerate(answers):
-            output_row = {"potential_answer": answer, "prediction_score": log_ps[idx], "row_id": batch["row_ids"][idx]}
+            output_row = {"potential_answer": answer, "prediction_score":str(numpy_log_ps[idx]), "row_id": batch["row_ids"][idx]}
             if "gold_answers" in batch:
                 # Somehow gold_answers becomes a tuple.
                 output_row["gold_answer"] = batch["gold_answers"][idx]
-            yield output_row
+            yield output_row, loss
