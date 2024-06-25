@@ -6,7 +6,7 @@ from setuptools import find_packages, setup
 
 HERE = os.path.abspath(os.path.dirname(__file__))
 README = open(os.path.join(HERE, "README.md")).read()
-VERSION = "0.1"
+VERSION = "0.2"
 
 # Publicly Available Packages (PyPi)
 INSTALL_REQUIRES = [
@@ -15,15 +15,9 @@ INSTALL_REQUIRES = [
     "matplotlib",
     "pandas",
     "scikit-learn",
-    "bitsandbytes",
-    "accelerate",
     "datasets",
-    "peft",
     "sentencepiece",
     "nltk",
-    "evaluate",
-    "bert-score",
-    "supar",
     "absl-py",
     "tqdm",
 ]
@@ -48,7 +42,7 @@ setup(
     version=VERSION,
     description="Codes developed for research with LLMs.",
     long_description=README,
-    classifiers=["Programming Language :: Python :: 3.12"],
+    classifiers=["Programming Language :: Python :: 3.10"],
     keywords="NLP, Machine Learning",
     author="Saeed Najafi",
     author_email="snajafi@ualberta.ca",

@@ -35,8 +35,6 @@ function install_env () {
 
 
 function install_package () {
-	pip3 install --no-cache-dir setuptools
-	pip3 install --no-cache-dir wheel
 	if [ "$OS" = "mac" ]; then
 		pip3 install --pre torch torchvision torchaudio torchtext \
 			--extra-index-url https://download.pytorch.org/whl/nightly/cpu
@@ -48,16 +46,16 @@ function install_package () {
 		pip3 install git+https://github.com/huggingface/transformers
 
 	elif [ "$OS" = "vcluster" ]; then
-		pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-		# compatible with python3.10 and cuda 11.8
-		pip3 install --no-cache-dir tensorflow==2.12.0
-		pip3 install --no-cache-dir tensorflow_hub==0.12.0 tensorflow_text==2.12.0
+		cd src/llama-recipes
+		pip3 install -U pip setuptools
+		pip3 install -U pip wheel
+		pip3 install wandb
+		pip3 install -e .
+		cd ..
+		cd ..
 		pip3 install -e .'[dev]'
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=7 pip3 install --no-cache-dir flash-attn --no-build-isolation
-		pip3 install -U sentence-transformers
-		pip3 install git+https://github.com/huggingface/transformers
 		export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
 
 	elif [ "$OS" = "colab" ]; then
