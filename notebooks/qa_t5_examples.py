@@ -28,8 +28,8 @@ test_file_name = "128-shot-datasets/squad/test.tsv"
 
 # folder to store models and predictions.
 model_path = "/scratch/ssd004/scratch/snajafi/checkpoints/t5-base"
-
-"""QA Model based on T5 base and without any optimizations for large-scale training."""
+"""QA Model based on T5 base and without any optimizations for large-scale
+training."""
 
 
 class T5BaseQA(BaseLM):
@@ -150,7 +150,8 @@ class T5BaseQA(BaseLM):
                 "gold_answer": batch["output_texts"][idx],
             }
             yield output_row
-            
+
+
 def read_gen_fewshot_file(file_path: str) -> Tuple[List[str], List[str]]:
     """Load the fewshot files for QA task."""
     df = pd.read_csv(file_path, sep="\t")
@@ -184,6 +185,7 @@ def create_dataloader(
     data = model.prepare_text(input_texts, output_texts)
     dataset = DictDataset(data)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+
 
 class QAMetricModel:
     """Load and cache a model used for evaluating generative text
@@ -296,6 +298,7 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
             return_metrics[metric] = score
 
     return return_metrics
+
 
 # Create model and start training.
 set_random_seed(42)

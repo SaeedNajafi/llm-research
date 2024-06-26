@@ -4,11 +4,11 @@ predictions."""
 import collections
 import re
 import string
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 import pandas as pd
 import torch
-from absl import flags, app
+from absl import app, flags
 from llm2vec import LLM2Vec
 from peft import PeftModel
 from sentence_transformers import SentenceTransformer
@@ -296,8 +296,8 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
 def main(argv: Any) -> None:
     """Test the metrics."""
     del argv
-    print(qa_metric("/scratch/ssd004/scratch/snajafi/checkpoints/llama3-squadv2.0_train_normal_no_icl/llama3.squad2.1024-13.original_validation.results.csv"))
-    # print(qa_metric("./src/metrics_test_file.csv"))
-    
+    print(qa_metric("./src/metrics_test_file.csv"))
+
+
 if __name__ == "__main__":
     app.run(main)

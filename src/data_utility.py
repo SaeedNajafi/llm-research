@@ -6,25 +6,20 @@ preemption of the jobs. Therefore, we save the dataloader status along
 with other components (optimizer, model, etc.)
 """
 
-from dataclasses import dataclass
+import ast
+import random
 from typing import Dict, Iterator, List, Optional, Tuple
 
 import pandas as pd
 import torch
 import torch.distributed as dist
-from absl import flags
 from torch.utils.data import DataLoader
 from torch.utils.data.dataloader import _BaseDataLoaderIter
 from torch.utils.data.distributed import DistributedSampler
 
 from src.general_utils import DictDataset, white_space_fix
-from src.main_lm import MainLM
-from src.paraphraser import Paraphraser
-
-FLAGS = flags.FLAGS
-flags.DEFINE_integer("train_batch_size", 16, "The batch size used for training.")
-flags.DEFINE_integer("eval_batch_size", 2048, "The batch size used for inference on the test or validation data.")
-flags.DEFINE_string("instruction_type", "qa", "The instruction type to format the input sentences.")
+from src.llama3 import Llama3
+from src.squadv2_llama3_instructions import explanation_icl_input, explanation_instruction, normal_icl_input, normal_instruction
 
 
 class DistributedSaveableSampler(DistributedSampler):
@@ -114,126 +109,98 @@ class DistributedSaveableSampler(DistributedSampler):
         self.epoch = state_dict["epoch"]
 
 
-@dataclass
-class GenRawData:
-    """Inputs for generative tasks."""
+def process_squad_dataset(
+    file_name: str, experiment_type: str, llama3_instruction_llama: str, llama3_input_template: str, llama3_output_template: str
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """Read and pre-process the squadv2 dataset for my application."""
 
-    inputs: List[str]
-    outputs: List[str]
-    paraphrase_inputs: List[str]
+    dataset = pd.read_csv(file_name, sep="\t").to_dict(orient="records")
 
+    if experiment_type == "normal_icl":
+        instruction = normal_icl_input
 
-def return_gen_instruction() -> Tuple[str, str]:
-    """Return the instruction type for generative QA tasks."""
-    instruction = ""
-    # These are llama 2 chat format.
-    inst_type = FLAGS.instruction_type
-    if ("_squad_" in inst_type) or ("_race_" in inst_type) or ("_narrativeqa_" in inst_type):
-        instruction = "In this task, you are given a context and question. \
-            Provide a short phrase as the answer for the given question using only the information from the context. \
-            If you do not have the complete information, generate 'no_answer' in the output. \
-            Do not repeat the question in the output."
-        template = "<s> [INST] <<SYS>> {instruction} <</SYS>> {input_text} [/INST]"
-    return white_space_fix(instruction), white_space_fix(template)
+    elif experiment_type == "normal_no_icl":
+        instruction = normal_instruction
 
+    elif experiment_type == "explanation_icl":
+        instruction = explanation_icl_input
 
-def gen_augment_batch(
-    batch: torch.utils.data.Dataset,
-    paraphrases: List[str],
-    num_return_seq: int,
-) -> None:
-    """Augment the batch with paraphrases for generative tasks."""
-    batch_size = len(batch["raw_input_ids"])
+    elif experiment_type == "explanation_no_icl":
+        instruction = explanation_instruction
 
-    inputs = []
-    instruction, template = return_gen_instruction()
-    for index in range(batch_size):
-        par_inputs = []
-        for par_index in range(num_return_seq):
-            par_base_index = index * num_return_seq
-            paraphrase = paraphrases[par_base_index + par_index : par_base_index + par_index + 1][0]
-            generated_paraphrase = paraphrase.removesuffix(" </s>")
-            original_question = batch["raw_input_ids"][index].split("Context:")[0]
-            input_str = f"{original_question} Context: {generated_paraphrase} [/INST] "
-            par_inputs.append(input_str)
-        inputs.append(par_inputs)
+    llama3_instruction = llama3_instruction_llama.format(instruction=instruction)
 
-    par_input_ids = []
-    for index in range(batch_size):
-        par_input_ids.append(batch["raw_input_ids"][index])
-        for each in inputs[index]:
-            par_input_ids.append(each)
+    next_example_number = 11 if "_no_" not in experiment_type else -1
+    squad_inputs = []
+    squad_outputs = []
+    gold_outputs = []
+    squad_ids = []
+    idx = 0
+    for row in dataset:
+        idx += 1
+        context = row["context"]
+        question = row["question"]
+        gold_answers = ast.literal_eval(row["answers"])
+        context = white_space_fix(context)
+        question = white_space_fix(question)
+        if experiment_type == "normal_icl":
+            user_final_message = f"Passage_{next_example_number}: {context}"
+            user_final_message += f"\nQuestion_{next_example_number}: {question}"
+            user_final_message += f"\nFinal Answer_{next_example_number}: "
+        elif experiment_type == "normal_no_icl":
+            user_final_message = f"Passage: {context}"
+            user_final_message += f"\nQuestion: {question}"
+            user_final_message += "\nFinal Answer: "
+        elif experiment_type == "explanation_icl":
+            user_final_message = f"Passage_{next_example_number}: {context}"
+            user_final_message += f"\nQuestion_{next_example_number}: {question}"
+            user_final_message += f"\nExplanations and Thought Process_{next_example_number}: "
+        elif experiment_type == "explanation_no_icl":
+            user_final_message = f"Passage: {context}"
+            user_final_message += f"\nQuestion: {question}"
+            user_final_message += "\nExplanations and Thought Process and Final Answer: "
 
-    batch["raw_input_ids"] = par_input_ids
+        llama3_input = llama3_input_template.format(input=user_final_message)
+        squad_input = f"{llama3_instruction}{llama3_input}"
+        squad_inputs.append(squad_input)
+        squad_ids.append(str(idx))
 
+        gold_outputs.append("_@_".join(gold_answers))
+        gold_answer = random.choice(gold_answers)
 
-def gen_template_data(input_texts: List[str], output_texts: List[str]) -> GenRawData:
-    """Helper function to format the data for the models in the generative
-    tasks."""
-    instruction, template = return_gen_instruction()
-    inputs = []
-    paraphrase_inputs = []
-    for input_text in input_texts:
-        input = template.format(instruction=instruction, input_text=input_text.removesuffix(" </s>"))
-        inputs.append(input)
-        # only paraphrase the context, and not the question.
-        paraphrase_input = white_space_fix(f"{input_text.removesuffix(' </s>').split('Context:')[1]}")
-        paraphrase_inputs.append(paraphrase_input)
-
-    return GenRawData(inputs=inputs, outputs=output_texts, paraphrase_inputs=paraphrase_inputs)
-
-
-def read_gen_fewshot_file(file_path: str) -> GenRawData:
-    """Load the fewshot files for QA task."""
-    df = pd.read_csv(file_path, sep="\t")
-    input_texts = df.article.tolist()
-    output_texts = df.answer.tolist()
-    return gen_template_data(input_texts, output_texts)
+        if experiment_type == "normal_icl":
+            squad_output = llama3_output_template.format(output=f"Final Answer_{next_example_number}: {gold_answer}")
+            squad_outputs.append(squad_output)
+        elif experiment_type == "normal_no_icl":
+            squad_output = llama3_output_template.format(output=f"Final Answer: {gold_answer}")
+            squad_outputs.append(squad_output)
+    return squad_inputs, squad_ids, squad_outputs, gold_outputs
 
 
-def gen_tokenize_data(rawdata: GenRawData, model: MainLM, paraphraser: Optional[Paraphraser] = None) -> DictDataset:
-    """Tokenize data into a dataset if needed."""
-
-    data = model.prepare_text(rawdata.inputs, rawdata.outputs)
-
-    if paraphraser is not None:
-        para_data = paraphraser.prepare_text_for_generation(rawdata.paraphrase_inputs)
-        data.update(para_data)
-
-    return DictDataset(data)
-
-
-def create_dataloader(
-    model: MainLM,
-    train_file_name: Optional[str] = None,
-    dev_file_name: Optional[str] = None,
-    test_file_name: Optional[str] = None,
-    task_name: Optional[str] = None,
-    paraphraser: Optional[Paraphraser] = None,
+def create_squadv2_dataloader(
+    model: Llama3, file_name: str, fold_name: str, experiment_type: str, batch_size: int = 1, world_size: int = 1, rank: int = 0
 ) -> DataLoader:
     """Function to create the required dataloader to train the LM models."""
-    if task_name in ["squad", "narrativeqa", "race"]:
-        if train_file_name is not None:
-            gen_rawdata = read_gen_fewshot_file(train_file_name)
-            shuffle = True
-            batch_size = FLAGS.train_batch_size
 
-        if dev_file_name is not None:
-            gen_rawdata = read_gen_fewshot_file(dev_file_name)
-            shuffle = False
-            batch_size = FLAGS.eval_batch_size
+    squad_inputs, squad_ids, squad_outputs, gold_outputs = process_squad_dataset(
+        file_name, experiment_type, model.llama3_instruction_llama, model.llama3_input_template, model.llama3_output_template
+    )
 
-        if test_file_name is not None:
-            gen_rawdata = read_gen_fewshot_file(test_file_name)
-            shuffle = False
-            batch_size = FLAGS.eval_batch_size
+    if fold_name == "train":
+        data = model.prepare_text_for_train(squad_inputs, squad_outputs, squad_ids)
+        dataset = DictDataset(data)
+        shuffle = True
 
-        dataset = gen_tokenize_data(gen_rawdata, model, paraphraser)
-        dataloader = DataLoader(
-            dataset,
-            shuffle=False,
-            batch_size=batch_size,
-            sampler=DistributedSaveableSampler(dataset, shuffle=shuffle),
-            num_workers=0,
-        )
+    elif fold_name in ["dev", "test"]:
+        data = model.prepare_text_for_inference(squad_inputs, squad_ids, gold_answers=gold_outputs)
+        dataset = DictDataset(data)
+        shuffle = False
+
+    dataloader = DataLoader(
+        dataset,
+        shuffle=False,
+        batch_size=batch_size,
+        sampler=DistributedSaveableSampler(dataset, shuffle=shuffle, num_replicas=world_size, rank=rank),
+        num_workers=0,
+    )
     return dataloader

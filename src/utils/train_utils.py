@@ -31,7 +31,7 @@ from src.utils.memory_utils import MemoryTrace
 
 
 @contextlib.contextmanager
-def profile(cfg: TRAIN_CONFIGS) -> Iterator[Union[None, torch.profiler.profile]]:
+def profile(cfg: TRAIN_CONFIGS) -> Iterator[torch.profiler.profile]:
     """Initialize the profile context manager."""
     use_profiler: bool = cfg.use_profiler
     if use_profiler:
@@ -59,7 +59,7 @@ def profile(cfg: TRAIN_CONFIGS) -> Iterator[Union[None, torch.profiler.profile]]
             yield torch_profiler
     else:
         torch_profiler = contextlib.nullcontext()
-        yield None
+        yield torch_profiler
 
 
 def save(model: Llama3, rank: int, train_config: TRAIN_CONFIGS, fsdp_config: FSDP_CONFIGS, epoch: int) -> None:
@@ -81,7 +81,7 @@ def save(model: Llama3, rank: int, train_config: TRAIN_CONFIGS, fsdp_config: FSD
 
     else:
         if not train_config.use_peft and fsdp_config.checkpoint_type == StateDictType.FULL_STATE_DICT:
-            save_model_checkpoint(model.model, model.optimizer, rank, train_config, epoch=epoch)
+            save_model_checkpoint(model.model, rank, train_config, epoch=epoch)
         elif not train_config.use_peft and fsdp_config.checkpoint_type == StateDictType.SHARDED_STATE_DICT:
             print(" Saving the FSDP model checkpoints using SHARDED_STATE_DICT")
             print("=====================================================")
@@ -153,7 +153,7 @@ def train(
 
     epoch_times: List[float] = []
     checkpoint_times: List[float] = []
-    results: Dict[str, Union[float, List[float]]] = {}
+    results: Dict[str, Union[float, str]] = {}
     best_val_score = -float("inf")
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
@@ -167,7 +167,7 @@ def train(
             total_loss = 0.0
             total_length = len(train_dataloader) // gradient_accumulation_steps
             pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
-            with profile(train_config, local_rank) as profile_context:
+            with profile(train_config) as profile_context:
                 for step, batch in enumerate(train_dataloader):
                     total_train_steps += 1
                     # stop when the maximum number of training steps is reached
@@ -389,7 +389,6 @@ def evaluation(
     val_step_loss: List[float] = []
     val_step_perplexity: List[float] = []
     val_scores: Dict[str, torch.Tensor] = {}
-    float_val_scores: Dict[str, float] = {}
     eval_loss: float = 0.0  # Initialize evaluation loss
     total_eval_steps: float = 0
     with MemoryTrace() as memtrace:
@@ -440,20 +439,16 @@ def evaluation(
 
     eval_ppl = torch.exp(eval_epoch_loss)
 
-    # convert to float
-    for score_name, score_val in val_scores.items():
-        float_val_scores[score_name] = score_val.item()
-
     # Print evaluation metrics
     if train_config.enable_fsdp:
         if local_rank == 0:
             message = f"eval_ppl={eval_ppl} eval_epoch_loss={eval_epoch_loss}"
-            for score_name, score_val in float_val_scores.items():
+            for score_name, score_val in val_scores.items():
                 message += f" {score_name}={score_val}"
             print(message)
     else:
         message = f"eval_ppl={eval_ppl} eval_epoch_loss={eval_epoch_loss}"
-        for score_name, score_val in float_val_scores.items():
+        for score_name, score_val in val_scores.items():
             message += f" {score_name}={score_val}"
         print(message)
 
@@ -462,10 +457,10 @@ def evaluation(
             "eval/perplexity": eval_ppl,
             "eval/loss": eval_epoch_loss,
         }
-        for score_name, score_val in float_val_scores.items():
+        for score_name, score_val in val_scores.items():
             log_data[f"eval/{score_name}"] = score_val
         wandb_run.log(log_data, commit=False)
-    return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity, float_val_scores
+    return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity, val_scores
 
 
 def freeze_transformer_layers(model: torch.nn.Module, num_layer: int) -> None:
