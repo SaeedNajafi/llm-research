@@ -1,11 +1,13 @@
 import dataclasses
 from typing import Any
+
 import wandb
 
 from src.configs import fsdp_config as FSDP_CONFIG
 from src.configs import train_config as TRAIN_CONFIG
 from src.configs import wandb_config as WANDB_CONFIG
 from src.utils.config_utils import update_config
+
 
 def setup_wandb(train_config: TRAIN_CONFIG, fsdp_config: FSDP_CONFIG, **kwargs: Any) -> Any:
     """Setup the wandb account."""

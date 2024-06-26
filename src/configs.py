@@ -1,54 +1,58 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
+
 @dataclass
 class train_config:
-    model_name: str = "PATH/to/Model"
+    model_name: str = "/model-weights/Meta-Llama-3-8B-Instruct"
     tokenizer_name: str = ""
+    experiment_type: str = "normal_no_icl"
+    train_file_name: str = "./notebooks/128-shot-datasets/squad/128-13-train.tsv"
+    dev_file_name: str = "./notebooks/128-shot-datasets/squad/128-13-dev.tsv"
+    test_file_name: str = "./notebooks/128-shot-datasets/squad/128-13-dev.tsv"
+    prediction_file_name: str = "squadv2.dev.results.csv"
     enable_fsdp: bool = False
     low_cpu_fsdp: bool = False
     run_validation: bool = True
     batch_size_training: int = 4
-    batching_strategy: str = "packing"  # alternative: padding
-    context_length: int = 4096
     gradient_accumulation_steps: int = 1
     gradient_clipping: bool = False
     gradient_clipping_threshold: float = 1.0
-    num_epochs: int = 3
-    T_0: int = 3
+    num_epochs: int = 10
+    T_0: int = 10
     max_train_step: int = 0
     max_eval_step: int = 0
     lm_top_p: float = 0.9
-    temperature: float = 0.6
+    temperature: float = 0.01
     lm_input_max_length: int = 1024
-    lm_output_max_length: int = 32
+    lm_output_max_length: int = 256
     num_workers_dataloader: int = 1
-    lr: float = 1e-4
+    lr: float = 5e-5
     eta_min: float = 1e-5
     weight_decay: float = 0.0
     seed: int = 42
     use_fp16: bool = False
-    mixed_precision: bool = True
-    val_batch_size: int = 1
-    dataset = "samsum_dataset"
+    mixed_precision: bool = False
+    val_batch_size: int = 16
     peft_method: str = "lora"
-    use_peft: bool = False
+    use_peft: bool = True
     from_peft_checkpoint: str = ""
-    output_dir: str = "PATH/to/save/PEFT/model"
+    output_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-512-512-new-code"
     freeze_layers: bool = False
     num_freeze_layers: int = 1
     quantization: bool = False
-    one_gpu: bool = False
+    one_gpu: bool = True
     save_model: bool = True
-    dist_checkpoint_root_folder: str = "PATH/to/save/FSDP/model"  # will be used if using FSDP
+    # will be used if using FSDP
+    dist_checkpoint_root_folder: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-512-512-new-code"
     dist_checkpoint_folder: str = "fine-tuned"  # will be used if using FSDP
-    save_optimizer: bool = False  # will be used if using FSDP
-    use_fast_kernels: bool = False
-    use_wandb: bool = False  # Enable wandb for experient tracking
-    save_metrics: bool = False  # saves training metrics to a json file for later plotting
+    save_optimizer: bool = True  # will be used if using FSDP
+    use_fast_kernels: bool = True
+    use_wandb: bool = True  # Enable wandb for experient tracking
+    save_metrics: bool = True  # saves training metrics to a json file for later plotting
     checkpoint_on_metric: str = "loss"
     use_profiler: bool = False
     profiler_dir: str = "PATH/to/save/profiler/results"  # will be used if using profiler
@@ -64,7 +68,7 @@ class lora_config:
 
 @dataclass
 class fsdp_config:
-    mixed_precision: bool = True
+    mixed_precision: bool = False
     use_fp16: bool = False
     # HYBRID_SHARD "Full Shard within a node DDP cross Nodes",
     # SHARD_GRAD_OP "Shard only Gradients and Optimizer States", NO_SHARD "Similar to DDP".
@@ -84,20 +88,20 @@ class fsdp_config:
 
     # alternatively can use SHARDED_STATE_DICT save one file per rank, and can resize the world-size.
     checkpoint_type: StateDictType = StateDictType.SHARDED_STATE_DICT
-    fsdp_activation_checkpointing: bool = True
+    fsdp_activation_checkpointing: bool = False
     fsdp_cpu_offload: bool = False
-    pure_bf16: bool = False
-    optimizer: str = "AdamW"
+    pure_bf16: bool = True
+    optimizer: str = "8bitAdamW"
 
 
 @dataclass
 class wandb_config:
-    project: str = "llama3_research"  # wandb project name
+    project: str = "llm_research"  # wandb project name
     entity: Optional[str] = None  # wandb entity name
     job_type: Optional[str] = None
     tags: Optional[List[str]] = None
-    group: Optional[str] = None
-    notes: Optional[str] = None
+    group: Optional[str] = "llama3-squadv2-experiments"
+    notes: Optional[str] = "tuning weights"
     mode: Optional[str] = None
 
 

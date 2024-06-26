@@ -1,15 +1,18 @@
 """Module for general utils."""
+
 from typing import Any, Dict
 
-from absl import flags
-
 import torch
+from absl import flags
 from torch.utils.data import Dataset
+
 FLAGS = flags.FLAGS
+
 
 def white_space_fix(text: str) -> str:
     """Remove extra spaces in text."""
     return " ".join(text.split())
+
 
 class DictDataset(Dataset):
     """Subclass the pytorch's Dataset to build my own dataset for the text

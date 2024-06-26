@@ -11,13 +11,11 @@ import tqdm
 
 
 def main() -> None:
-    """Compare two llama checkpoint directories"""
+    """Compare two llama checkpoint directories."""
 
     one_files = sorted(glob.glob(os.path.join(sys.argv[1], "consolidated.*.pth")))
     two_files = sorted(glob.glob(os.path.join(sys.argv[2], "consolidated.*.pth")))
-    assert len(one_files) == len(
-        two_files
-    ), "One directory has {} files while another has {} files.".format(
+    assert len(one_files) == len(two_files), "One directory has {} files while another has {} files.".format(
         len(one_files), len(two_files)
     )
 
@@ -25,15 +23,11 @@ def main() -> None:
     for i in tqdm.trange(len(one_files), desc="Comparing shards"):
         one = torch.load(one_files[i])
         two = torch.load(two_files[i])
-        assert len(one) == len(
-            two
-        ), "shard should have the same length: {} != {}".format(len(one), len(two))
+        assert len(one) == len(two), "shard should have the same length: {} != {}".format(len(one), len(two))
 
         for _, (v, w) in enumerate(zip(one.items(), two.items())):
             assert v[0] == w[0], "{} != {}".format(v[0], w[0])
-            assert v[1].shape == w[1].shape, "tensor {} shape {} != {}".format(
-                v[0], v[1].shape, w[1].shape
-            )
+            assert v[1].shape == w[1].shape, "tensor {} shape {} != {}".format(v[0], v[1].shape, w[1].shape)
 
             delta = (v[1] - w[1]).abs().max().item()
             deltas.append((i, v[0], delta))

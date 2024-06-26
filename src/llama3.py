@@ -202,7 +202,7 @@ class Llama3(torch.nn.Module):
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=train_config.T_0, eta_min=train_config.eta_min)
 
     def prepare_text_for_inference(
-        self, texts: List[str], row_ids: List[str], gold_answers: Optional[List[List[str]]] = None
+        self, texts: List[str], row_ids: List[str], gold_answers: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for
         inference."""
@@ -331,7 +331,11 @@ class Llama3(torch.nn.Module):
         loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().cpu().numpy()
         for idx, answer in enumerate(answers):
-            output_row = {"potential_answer": answer, "prediction_score":str(numpy_log_ps[idx]), "row_id": batch["row_ids"][idx]}
+            output_row = {
+                "potential_answer": answer,
+                "prediction_score": str(numpy_log_ps[idx]),
+                "row_id": batch["row_ids"][idx],
+            }
             if "gold_answers" in batch:
                 # Somehow gold_answers becomes a tuple.
                 output_row["gold_answer"] = batch["gold_answers"][idx]
