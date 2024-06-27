@@ -1,0 +1,49 @@
+#!/bin/bash
+#SBATCH --job-name=llama3-multigpu
+#SBATCH --nodes=1
+#SBATCH --mem=0
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=24
+#SBATCH --gres=gpu:a40:4
+#SBATCH --output=llama3.%j.out
+#SBATCH --error=llama3.%j.err
+#SBATCH --partition=a40
+#SBATCH --qos=m
+#SBATCH --open-mode=append
+#SBATCH --wait-all-nodes=1
+#SBATCH --time=04:00:00
+
+date;hostname;pwd
+
+module load cuda11.8+cudnn8.9.6
+
+source ${PWD}/llm-env/bin/activate
+
+export PATH=${PWD}/llm-env/bin:$PATH
+export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
+export XDG_RUNTIME_DIR=""
+
+export MASTER_ADDR="$(hostname --fqdn)"
+export MASTER_PORT="$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')"
+export RDVZ_ID=$RANDOM
+echo "RDZV Endpoint $MASTER_ADDR:$MASTER_PORT"
+
+export NCCL_IB_DISABLE=1  # Our cluster does not have InfiniBand. We need to disable usage using this flag.
+export NCCL_DEBUG=WARN
+export NCCL_DEBUG_SUBSYS=WARN
+
+export LOGLEVEL=INFO
+export PYTHONFAULTHANDLER=1
+
+srun -p $SLURM_JOB_PARTITION \
+    -c $SLURM_CPUS_ON_NODE \
+    -N $SLURM_JOB_NUM_NODES \
+    --mem=0 \
+    --gres=gpu:$SLURM_JOB_PARTITION:$SLURM_GPUS_ON_NODE \
+    bash -c 'torchrun \
+    --nproc-per-node=$SLURM_GPUS_ON_NODE \
+    --nnodes=$SLURM_JOB_NUM_NODES \
+    --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
+    --rdzv-id $RDVZ_ID \
+    --rdzv-backend c10d \
+    src/squadv2_llama3_finetuning.py'
