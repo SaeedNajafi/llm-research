@@ -4,22 +4,23 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
 from bitsandbytes.optim.adamw import AdamW8bit
-from peft import LoraConfig, PeftModel, TaskType, get_peft_model, prepare_model_for_kbit_training
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import ShardingStrategy
-from torch.distributed.fsdp.fully_sharded_data_parallel import CPUOffload
+from peft import prepare_model_for_kbit_training
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from transformers import AutoTokenizer, LlamaConfig, LlamaForCausalLM
-from transformers.models.llama.modeling_llama import LlamaDecoderLayer
+from transformers import AutoTokenizer
 
 from src.configs import fsdp_config as FSDP_CONFIG
 from src.configs import lora_config as LORA_CONFIG
 from src.configs import train_config as TRAIN_CONFIG
-from src.model_utils import llama_log_of_labels, lm_logits, log_of_labels
-from src.policies import apply_fsdp_checkpointing
-from src.utils import fsdp_auto_wrap_policy
-from src.utils.fsdp_utils import hsdp_device_mesh
-from src.utils.train_utils import clear_gpu_cache, freeze_transformer_layers, get_policies, print_model_size
+from src.model_utils import (
+    get_lora_model_from_base_model,
+    get_submodule_by_pattern,
+    llama_log_of_labels,
+    lm_logits,
+    load_model,
+    log_of_labels,
+    shard_model,
+)
+from src.utils.train_utils import clear_gpu_cache, print_model_size
 
 # Make sure we have some tokens defined for the LM, if not defined in the model.
 # Specific for Llama3
@@ -28,7 +29,7 @@ _EXTRA_TOKENS = {
 }
 
 
-class Llama3(torch.nn.Module):
+class LlamaQA(torch.nn.Module):
     """Class to implement Llama3."""
 
     def __init__(
@@ -44,8 +45,8 @@ class Llama3(torch.nn.Module):
         self.train_config = train_config
         self.fsdp_config = fsdp_config
         self.lora_config = lora_config
-        self.local_rank = local_rank
         self.rank = rank
+        self.local_rank = local_rank
 
         # Chat templates for llama3.
         self.llama3_instruction_llama = (
@@ -57,41 +58,21 @@ class Llama3(torch.nn.Module):
         # We will compute per token log probabilities.
         # pad tokens have index -100 in huggingface.
         # don't reduce loss (log likelihood), compute loss per token.
-        self.loss_func = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
+        loss_func = torch.nn.CrossEntropyLoss(ignore_index=-100, reduction="none")
 
         # Load the pre-trained model and setup its configuration
-        use_cache = False if train_config.enable_fsdp else None
-        if train_config.enable_fsdp and train_config.low_cpu_fsdp:
-            """For FSDP, we can save cpu memory by loading pretrained model on
-            rank0 only.
 
-            this avoids cpu oom when loading large models like llama
-            70B, in which case model alone would consume 2+TB cpu mem
-            (70 * 4 * 8). This will add some comms overhead and
-            currently requires latest nightly.
-            """
-            if self.rank == 0:
-                model = LlamaForCausalLM.from_pretrained(
-                    train_config.model_name,
-                    load_in_8bit=True if train_config.quantization else None,
-                    device_map="auto" if train_config.quantization else None,
-                    use_cache=use_cache,
-                    attn_implementation="flash_attention_2" if train_config.use_fast_kernels else None,
-                )
-            else:
-                llama_config = LlamaConfig.from_pretrained(train_config.model_name)
-                llama_config.use_cache = use_cache
-                with torch.device("meta"):
-                    model = LlamaForCausalLM(llama_config)
+        model = load_model(
+            train_config.model_name,
+            use_fa=train_config.use_fast_kernels,
+            use_mp=fsdp_config.mixed_precision,
+            low_cpu_mem_usage=train_config.low_cpu_mem_usage,
+            local_rank=self.local_rank,
+            load_in_8bit=True if train_config.quantization else False,
+        )
 
-        else:
-            model = LlamaForCausalLM.from_pretrained(
-                train_config.model_name,
-                load_in_8bit=True if train_config.quantization else None,
-                device_map="auto" if train_config.quantization else None,
-                use_cache=use_cache,
-                attn_implementation="flash_attention_2" if train_config.use_fast_kernels else None,
-            )
+        # let fsdp handle this extra module to the devices.
+        model.loss_func = loss_func
 
         # Load the tokenizer and add special tokens
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -119,84 +100,35 @@ class Llama3(torch.nn.Module):
         # required for llama3.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
-        print_model_size(model, train_config, self.rank if train_config.enable_fsdp else 0)
+        print_model_size(model, train_config, self.rank)
 
         # Prepare the model for int8 training if quantization is enabled
         if train_config.quantization:
             model = prepare_model_for_kbit_training(model)
 
-        # Convert the model to bfloat16 if fsdp and pure_bf16 is enabled
-        if train_config.enable_fsdp and fsdp_config.pure_bf16:
-            model.to(torch.bfloat16)
-
         if train_config.use_peft:
             # Load the pre-trained peft model checkpoint and setup its configuration
             if train_config.from_peft_checkpoint:
-                model = PeftModel.from_pretrained(model, train_config.from_peft_checkpoint, is_trainable=True)
-                self.peft_config = model.peft_config()
+                model = get_lora_model_from_base_model(model, lora_config, train_config.from_peft_checkpoint)
+                self.peft_config = model.peft_config
             # Generate the peft config and start fine-tuning from original model
             else:
-                self.peft_config = LoraConfig(
-                    task_type=TaskType.CAUSAL_LM,
-                    inference_mode=False,
-                    r=lora_config.lora_r,
-                    lora_alpha=lora_config.lora_alpha,
-                    lora_dropout=lora_config.lora_dropout,
-                    bias="none",
-                    init_lora_weights=True,
-                    target_modules=lora_config.lora_target_modules,
-                )
-                model = get_peft_model(model, self.peft_config)
+                model = get_lora_model_from_base_model(model, lora_config)
+                self.peft_config = model.peft_config
 
-            model.print_trainable_parameters()
-
-        hsdp_device_mesh_plan = None
-        if fsdp_config.hsdp and fsdp_config.sharding_strategy == ShardingStrategy.HYBRID_SHARD:
-            hsdp_device_mesh_plan = hsdp_device_mesh(
-                replica_group_size=fsdp_config.replica_group_size, sharding_group_size=fsdp_config.sharding_group_size
-            )
-            print("HSDP device mesh is ready")
-
-        # Setting up FSDP if enable_fsdp is enabled
-        if train_config.enable_fsdp:
-            if not train_config.use_peft and train_config.freeze_layers:
-                freeze_transformer_layers(model, train_config.num_freeze_layers)
-
-            mixed_precision_policy, wrapping_policy = get_policies(fsdp_config, self.rank)
-            my_auto_wrapping_policy = fsdp_auto_wrap_policy(model, LlamaDecoderLayer)
-
-            if torch.cuda.is_available():
-                self.device_id = torch.cuda.current_device()
-
-            self.loss_func.to(self.device_id)
-
-            model = FSDP(
-                model,
-                auto_wrap_policy=my_auto_wrapping_policy if train_config.use_peft else wrapping_policy,
-                cpu_offload=CPUOffload(offload_params=True) if fsdp_config.fsdp_cpu_offload else None,
-                mixed_precision=mixed_precision_policy if not fsdp_config.pure_bf16 else None,
-                sharding_strategy=fsdp_config.sharding_strategy,
-                device_mesh=hsdp_device_mesh_plan,
-                device_id=self.device_id,
-                limit_all_gathers=True,
-                sync_module_states=train_config.low_cpu_fsdp,
-                param_init_fn=(
-                    (lambda module: module.to_empty(device=torch.device("cuda"), recurse=False))
-                    if train_config.low_cpu_fsdp and self.rank != 0
-                    else None
-                ),
-            )
-            if fsdp_config.fsdp_activation_checkpointing:
-                apply_fsdp_checkpointing(model)
-
-        elif not train_config.quantization and not train_config.enable_fsdp:
-            if torch.cuda.is_available():
-                model.to("cuda")
-                self.loss_func.to("cuda")
-                self.device_id = "cuda"
-            else:
-                self.device_id = "cpu"
-
+        decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
+        assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
+        model = shard_model(
+            model,
+            decoder_layer_module,
+            fsdp_config.mixed_precision,
+            fsdp_config.activation_checkpointing,
+            fsdp_config.sharding_strategy,
+            self.local_rank,
+            train_config.low_cpu_mem_usage,
+            train_config.use_peft,
+        )
+        self.device = model.device
         self.model = model
         self.optimizer = AdamW8bit(self.model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=train_config.T_0, eta_min=train_config.eta_min)
@@ -247,19 +179,19 @@ class Llama3(torch.nn.Module):
     def predict_mode_on(self) -> None:
         """For each iteration of prediction over batch, clear gpu cache, turn
         on eval mode."""
-        clear_gpu_cache(self.local_rank)
+        clear_gpu_cache(self.rank)
         self.model.eval()
 
     def train_mode_on(self) -> None:
         """Before every forward-backward iteration over batch, clear gpu cache,
         turn on train mode!"""
-        clear_gpu_cache(self.local_rank)
+        clear_gpu_cache(self.rank)
         self.model.train()
 
     def data_to_device(self, batch: torch.utils.data.Dataset, keys: List[str]) -> Dict[str, torch.Tensor]:
         """Move the batch tensors specified by keys into the gpu and return a
         dictionary to access the gpu tensors."""
-        return {key: batch[key].to(self.device_id) for key in keys}
+        return {key: batch[key].to(self.device) for key in keys}
 
     def train(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Using the Llama, run a forward computation over the batch, compute
@@ -286,7 +218,7 @@ class Llama3(torch.nn.Module):
                 batch_size, seq_len
             ) < original_len_without_answer.unsqueeze(1)
             masked_labels = masked_labels.masked_fill(prompt_mask == 1, -100)
-            return llama_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.loss_func)
+            return llama_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.model.loss_func)
 
     def generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
         """Using the Llama, generate new text.
@@ -320,7 +252,7 @@ class Llama3(torch.nn.Module):
         logits_list = list(predictions_output.logits)
         logits = torch.stack(logits_list, dim=1)
         labels_to_consider = selected_samples.masked_fill(selected_samples == self.tokenizer.pad_token_id, -100)
-        final_log_ps = log_of_labels(logits=logits, labels=labels_to_consider, loss_func=self.loss_func)
+        final_log_ps = log_of_labels(logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func)
         actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
         # Average log probs per token (length normalization).
         return predictions_str, final_log_ps / actual_lens

@@ -16,7 +16,7 @@ from src.configs import lora_config as LORA_CONFIG
 from src.configs import train_config as TRAIN_CONFIG
 from src.configs import update_config
 from src.data_utility import create_squadv2_dataloader
-from src.llama3 import Llama3
+from src.llama3 import LlamaQA
 from src.metrics import qa_metric_squadv2_metrics
 from src.model_utils import set_random_seed
 from utils.train_utils import clear_gpu_cache, setup, setup_environ_flags, train
@@ -30,12 +30,11 @@ def main(**kwargs: Any) -> None:
     # Set the seeds for reproducibility
     set_random_seed(train_config.seed)
 
-    if train_config.enable_fsdp:
-        setup()
-        # torchrun specific
-        local_rank = int(os.environ["LOCAL_RANK"])
-        rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
+    setup()
+    # torchrun specific
+    local_rank = int(os.environ["LOCAL_RANK"])
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
 
     if torch.distributed.is_initialized():
         if torch.cuda.is_available():
@@ -46,14 +45,15 @@ def main(**kwargs: Any) -> None:
     wandb_run = None
 
     if train_config.use_wandb:
-        if not train_config.enable_fsdp or rank == 0:
-            wandb_run = setup_wandb(train_config, fsdp_config, **kwargs)
+        if rank == 0:
+            wandb_run = setup_wandb(train_config, fsdp_config, lora_config, **kwargs)
 
     # Initialize the model here.
-    model = Llama3(train_config, fsdp_config, lora_config, local_rank, rank)
+    model = LlamaQA(train_config, fsdp_config, lora_config, local_rank, rank)
 
     if wandb_run:
-        wandb_run.config.update(model.peft_config)
+        if train_config.use_peft:
+            wandb_run.config.update(model.peft_config)
 
     train_dataloader = create_squadv2_dataloader(
         model,
@@ -84,12 +84,12 @@ def main(**kwargs: Any) -> None:
         train_config.prediction_file_name,
         train_config,
         fsdp_config,
-        local_rank,
         rank,
+        world_size,
         wandb_run,
         qa_metric_squadv2_metrics,
     )
-    if not train_config.enable_fsdp or rank == 0:
+    if rank == 0:
         [print(f"Key: {k}, Value: {v}") for k, v in results.items()]
         if train_config.use_wandb:
             for k, v in results.items():
