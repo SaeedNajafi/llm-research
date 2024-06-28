@@ -10,11 +10,7 @@ from typing import Any
 import fire
 import torch
 
-from src.checkpoint_utils import setup_wandb
-from src.configs import fsdp_config as FSDP_CONFIG
-from src.configs import lora_config as LORA_CONFIG
-from src.configs import train_config as TRAIN_CONFIG
-from src.configs import update_config
+from src.configs import FsdpConfig, LoraConfig, TrainConfig, setup_wandb, update_config
 from src.data_utility import create_squadv2_dataloader
 from src.llama3 import LlamaQA
 from src.metrics import qa_metric_squadv2_metrics
@@ -24,7 +20,7 @@ from utils.train_utils import clear_gpu_cache, setup, setup_environ_flags, train
 
 def main(**kwargs: Any) -> None:
     # Update the configuration for the training and sharding process
-    train_config, fsdp_config, lora_config = TRAIN_CONFIG(), FSDP_CONFIG(), LORA_CONFIG()
+    train_config, fsdp_config, lora_config = TrainConfig(), FsdpConfig(), LoraConfig()
     update_config((train_config, fsdp_config, lora_config), **kwargs)
 
     # Set the seeds for reproducibility
@@ -39,7 +35,7 @@ def main(**kwargs: Any) -> None:
     if torch.distributed.is_initialized():
         if torch.cuda.is_available():
             torch.cuda.set_device(local_rank)
-        clear_gpu_cache(local_rank)
+        clear_gpu_cache()
         setup_environ_flags(rank)
 
     wandb_run = None
@@ -80,8 +76,6 @@ def main(**kwargs: Any) -> None:
         model,
         train_dataloader,
         eval_dataloader,
-        train_config.gradient_accumulation_steps,
-        train_config.prediction_file_name,
         train_config,
         fsdp_config,
         rank,
