@@ -20,12 +20,12 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataP
 from torch.distributed.fsdp.wrap import _or_policy, lambda_auto_wrap_policy, transformer_auto_wrap_policy
 from transformers import AutoModelForCausalLM, PreTrainedModel
 
-from src.configs import lora_config as LORA_CONFIG
+from src.configs import LoraConfig as MyLoraConfig
 
 
 def get_lora_model_from_base_model(
     base_model: PreTrainedModel,
-    lora_config: LORA_CONFIG,
+    lora_config: MyLoraConfig,
     path_to_peft_adapter_to_restore: str | None = None,
 ) -> PeftModel:
     """Initialize lora peft configuration from a non-lora model.
@@ -63,7 +63,6 @@ def load_model(
     path: str,
     use_mp: bool,
     use_fa: bool,
-    load_in_8bit: bool,
     local_rank: int,
     low_cpu_mem_usage: bool,
     use_safetensors: bool = True,
@@ -86,7 +85,7 @@ def load_model(
         The model.
     """
     # load model
-    model_args: Dict[str, Any] = {"use_cache": False, "use_safetensors": use_safetensors, "load_in_8bit": load_in_8bit}
+    model_args: Dict[str, Any] = {"use_cache": False, "use_safetensors": use_safetensors}
 
     if use_mp:
         model_args["torch_dtype"] = torch.bfloat16

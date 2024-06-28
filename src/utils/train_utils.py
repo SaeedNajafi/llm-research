@@ -19,14 +19,13 @@ from accelerate.utils import is_ccl_available
 from torch.distributed.fsdp import StateDictType
 from tqdm import tqdm
 
-from src.configs import fsdp_config as FSDP_CONFIGS
-from src.configs import train_config as TRAIN_CONFIGS
+from src.configs import FsdpConfig, TrainConfig
 from src.model_checkpointing import save_model_and_optimizer_sharded, save_model_checkpoint, save_optimizer_checkpoint
 from src.utils.memory_utils import MemoryTrace
 
 
 @contextlib.contextmanager
-def profile(cfg: TRAIN_CONFIGS) -> Iterator[torch.profiler.profile]:
+def profile(cfg: TrainConfig) -> Iterator[torch.profiler.profile]:
     """Initialize the profile context manager."""
     use_profiler: bool = cfg.use_profiler
     if use_profiler:
@@ -57,7 +56,7 @@ def profile(cfg: TRAIN_CONFIGS) -> Iterator[torch.profiler.profile]:
         yield torch_profiler
 
 
-def save(model: Any, rank: int, train_config: TRAIN_CONFIGS, fsdp_config: FSDP_CONFIGS, epoch: int) -> None:
+def save(model: Any, rank: int, train_config: TrainConfig, fsdp_config: FsdpConfig, epoch: int) -> None:
     """Save the fsdp model during training."""
     dist.barrier()
     if train_config.use_peft:
@@ -92,10 +91,8 @@ def train(
     model: Any,
     train_dataloader: torch.utils.data.DataLoader,
     eval_dataloader: torch.utils.data.DataLoader,
-    gradient_accumulation_steps: int,
-    prediction_file_name: str,
-    train_config: TRAIN_CONFIGS,
-    fsdp_config: FSDP_CONFIGS,
+    train_config: TrainConfig,
+    fsdp_config: FsdpConfig,
     rank: int,
     world_size: int,
     wandb_run: Any,
@@ -144,7 +141,7 @@ def train(
         epoch_start_time = time.perf_counter()
         with MemoryTrace() as memtrace:  # track the memory usage
             total_loss = 0.0
-            total_length = len(train_dataloader) // gradient_accumulation_steps
+            total_length = len(train_dataloader) // train_config.gradient_accumulation_steps
             pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
             with profile(train_config) as profile_context:
                 for step, batch in enumerate(train_dataloader):
@@ -161,7 +158,7 @@ def train(
 
                     loss = model.train(batch)
                     loss = -torch.mean(loss, dim=0)
-                    loss = loss / gradient_accumulation_steps
+                    loss = loss / train_config.gradient_accumulation_steps
                     if train_config.save_metrics:
                         train_step_loss.append(loss.detach().float().item())
                         train_step_perplexity.append(float(torch.exp(loss.detach().float())))
@@ -169,7 +166,7 @@ def train(
 
                     # regular backpropagation when fp16 is not used
                     loss.backward()
-                    if (step + 1) % gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+                    if (step + 1) % train_config.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                         if train_config.gradient_clipping and train_config.gradient_clipping_threshold > 0.0:
                             model.model.clip_grad_norm_(train_config.gradient_clipping_threshold)
                         model.optimizer.step()
@@ -225,7 +222,7 @@ def train(
         model.scheduler.step()
         if train_config.run_validation:
             eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores = evaluation(
-                model, train_config, eval_dataloader, prediction_file_name, rank, world_size, wandb_run, metric
+                model, train_config, eval_dataloader, train_config.prediction_file_name, rank, world_size, wandb_run, metric
             )
             if train_config.save_metrics:
                 val_step_loss.extend(temp_val_loss)
@@ -319,7 +316,7 @@ def train(
 
 def evaluation(
     model: Any,
-    train_config: TRAIN_CONFIGS,
+    train_config: TrainConfig,
     eval_dataloader: torch.utils.data.DataLoader,
     prediction_file_name: str,
     rank: int,
@@ -433,10 +430,8 @@ def cleanup() -> None:
     dist.destroy_process_group()
 
 
-def clear_gpu_cache(rank: int) -> None:
+def clear_gpu_cache() -> None:
     """Clear the GPU cache for all ranks."""
-    if rank == 0:
-        print("Clearing GPU cache for all ranks")
     torch.cuda.empty_cache()
     gc.collect()
 
@@ -449,7 +444,7 @@ def get_parameter_dtypes(model: torch.nn.Module) -> Dict[str, torch.dtype]:
     return parameter_dtypes
 
 
-def print_model_size(model: torch.nn.Module, config: TRAIN_CONFIGS, rank: int = 0) -> None:
+def print_model_size(model: torch.nn.Module, config: TrainConfig, rank: int = 0) -> None:
     """Print model name, the number of trainable parameters and initialization
     time.
 
@@ -466,7 +461,7 @@ def print_model_size(model: torch.nn.Module, config: TRAIN_CONFIGS, rank: int = 
         print(f"\n--> {config.model_name} has {total_params / 1e6} Million params\n")
 
 
-def save_train_params(train_config: TRAIN_CONFIGS, fsdp_config: FSDP_CONFIGS, rank: int) -> None:
+def save_train_params(train_config: TrainConfig, fsdp_config: FsdpConfig, rank: int) -> None:
     """This function saves the train_config and FSDP config into a
     train_params.yaml.
 

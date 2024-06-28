@@ -16,7 +16,7 @@ from torch.distributed.fsdp import FullStateDictConfig  # general model non-shar
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
-from src.configs import train_config as TRAIN_CONFIG
+from src.configs import TrainConfig
 
 
 def get_date_of_run() -> str:
@@ -32,7 +32,7 @@ def get_date_of_run() -> str:
 fullstate_save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
 
 
-def load_model_sharded(model: torch.nn.Module, rank: int, cfg: TRAIN_CONFIG) -> None:
+def load_model_sharded(model: torch.nn.Module, rank: int, cfg: TrainConfig) -> None:
     """Load model to a sharded strategy."""
     folder_name = cfg.dist_checkpoint_root_folder + "/" + cfg.dist_checkpoint_folder + "-" + cfg.model_name
 
@@ -66,7 +66,7 @@ def load_model_sharded(model: torch.nn.Module, rank: int, cfg: TRAIN_CONFIG) -> 
 
 
 def save_model_and_optimizer_sharded(
-    model: torch.nn.Module, rank: int, cfg: TRAIN_CONFIG, optim: Optional[torch.optim.Optimizer] = None
+    model: torch.nn.Module, rank: int, cfg: TrainConfig, optim: Optional[torch.optim.Optimizer] = None
 ) -> None:
     """Save model and optimizer via sharded_state_dict to save_dir."""
 
@@ -102,7 +102,7 @@ def save_model_and_optimizer_sharded(
 def save_model_checkpoint(
     model: torch.nn.Module,
     rank: int,
-    cfg: TRAIN_CONFIG,
+    cfg: TrainConfig,
     epoch: int = 1,
 ) -> None:
     """Saving model via rank0 cpu streaming and full_state_dict."""
@@ -127,7 +127,7 @@ def save_model_checkpoint(
         print(f"model checkpoint saved for epoch {epoch} at {save_full_path}\n")
 
 
-def load_model_checkpoint(model: torch.nn.Module, rank: int, cfg: TRAIN_CONFIG) -> None:
+def load_model_checkpoint(model: torch.nn.Module, rank: int, cfg: TrainConfig) -> None:
     """Load local checkpoint to rank0 cpu must be called * before * passing to
     FSDP."""
 
@@ -151,7 +151,7 @@ def load_model_checkpoint(model: torch.nn.Module, rank: int, cfg: TRAIN_CONFIG) 
 
 
 def save_optimizer_checkpoint(
-    model: torch.nn.Module, optimizer: torch.optim.Optimizer, rank: int, cfg: TRAIN_CONFIG, epoch: int = 1
+    model: torch.nn.Module, optimizer: torch.optim.Optimizer, rank: int, cfg: TrainConfig, epoch: int = 1
 ) -> None:
     """Save optimizer state via full state dict."""
 

@@ -75,7 +75,7 @@ class QAMetricModel:
         all_scores = []
         num_chunks = max(len(predictions) // self.batch_size, 1)
         for chunk_i in range(num_chunks):
-            clear_gpu_cache(rank=-1)
+            clear_gpu_cache()
 
             if (chunk_i + 1) * self.batch_size <= len(predictions):
                 predictions_sub_arr = predictions[chunk_i * self.batch_size : (chunk_i + 1) * self.batch_size]

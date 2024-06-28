@@ -1,25 +1,32 @@
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, List, Optional
 
+import wandb
 from peft import TaskType
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 
 
 @dataclass
-class train_config:
+class TrainConfig:
     model_name: str = "/model-weights/Meta-Llama-3-8B-Instruct"
-    tokenizer_name: str = ""
     experiment_type: str = "normal_no_icl"
-    train_file_name: str = "./notebooks/128-shot-datasets/squad/128-13-train.tsv"
-    dev_file_name: str = "./notebooks/128-shot-datasets/squad/128-13-dev.tsv"
-    test_file_name: str = "./notebooks/128-shot-datasets/squad/128-13-dev.tsv"
-    prediction_file_name: str = "/scratch/ssd004/scratch/snajafi/checkpoints/squadv2.dev.results.csv"
+    train_file_name: str = "./notebooks/1024-shot-datasets/squad/1024-13-train.tsv"
+    dev_file_name: str = "./notebooks/1024-shot-datasets/squad/1024-13-dev.tsv"
+    test_file_name: str = "./notebooks/1024-shot-datasets/squad/1024-13-dev.tsv"
+    prediction_file_name: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3/squadv2.dev.results.csv"
+    output_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3"
+
+    # will be used if using FSDP
+    dist_checkpoint_root_folder: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3"
+    dist_checkpoint_folder: str = "fine-tuned"  # will be used if using FSDP
+
+    checkpoint_on_metric: str = "squadv2_metrics_f1"
     run_validation: bool = True
-    batch_size_training: int = 4
+    batch_size_training: int = 16
     gradient_accumulation_steps: int = 1
-    gradient_clipping: bool = False
+    gradient_clipping: bool = True
     gradient_clipping_threshold: float = 1.0
-    num_epochs: int = 10
+    num_epochs: int = 50
     T_0: int = 10
     max_train_step: int = 0
     max_eval_step: int = 0
@@ -31,41 +38,34 @@ class train_config:
     num_workers_dataloader: int = 1
     lr: float = 5e-5
     eta_min: float = 1e-5
-    weight_decay: float = 0.0
+    weight_decay: float = 0.001
     seed: int = 42
-    val_batch_size: int = 8
+    val_batch_size: int = 16
     peft_method: str = "lora"
     use_peft: bool = True
     from_peft_checkpoint: str = ""
-    output_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-512-512-new-code"
-    quantization: bool = False
     save_model: bool = True
-    # will be used if using FSDP
-    dist_checkpoint_root_folder: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-512-512-new-code"
-    dist_checkpoint_folder: str = "fine-tuned"  # will be used if using FSDP
+
     save_optimizer: bool = True  # will be used if using FSDP
     use_fast_kernels: bool = True
     use_wandb: bool = True  # Enable wandb for experient tracking
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
-    checkpoint_on_metric: str = "loss"
     use_profiler: bool = False
-    profiler_dir: str = (
-        "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-512-512-new-code_profiler"  # will be used if using profiler
-    )
+    profiler_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3/profiler"  # will be used if using profiler
 
 
 @dataclass
-class lora_config:
-    r: int = 512
-    lora_alpha: int = 512
+class LoraConfig:
+    r: int = 1024
+    lora_alpha: int = 1024
     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj", "o_proj", "k_proj"])
-    lora_dropout: float = 0.2
+    lora_dropout: float = 0.3
     task_type: TaskType = TaskType.CAUSAL_LM
     inference_mode: bool = False
 
 
 @dataclass
-class fsdp_config:
+class FsdpConfig:
     mixed_precision: bool = True
     activation_checkpointing: bool = True
     # HYBRID_SHARD "Full Shard within a node DDP cross Nodes",
@@ -76,7 +76,7 @@ class fsdp_config:
 
 
 @dataclass
-class wandb_config:
+class WandbConfig:
     project: str = "llm_research"  # wandb project name
     entity: Optional[str] = None  # wandb entity name
     job_type: Optional[str] = None
@@ -104,5 +104,17 @@ def update_config(config: Any, **kwargs: Any) -> None:
                     else:
                         # In case of specialized config we can warn user
                         print(f"Warning: {config_name} does not accept parameter: {k}")
-            elif isinstance(config, train_config):
+            elif isinstance(config, TrainConfig):
                 print(f"Warning: unknown parameter {k}")
+
+
+def setup_wandb(train_config: TrainConfig, fsdp_config: FsdpConfig, lora_config: LoraConfig, **kwargs: Any) -> Any:
+    """Setup the wandb account."""
+    wandb_config = WandbConfig()
+    update_config(wandb_config, **kwargs)
+    init_dict = asdict(wandb_config)
+    run = wandb.init(**init_dict)
+    run.config.update(train_config)
+    run.config.update(fsdp_config, allow_val_change=True)
+    run.config.update(lora_config, allow_val_change=True)
+    return run

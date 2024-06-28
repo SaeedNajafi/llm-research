@@ -4,13 +4,10 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
 from bitsandbytes.optim.adamw import AdamW8bit
-from peft import prepare_model_for_kbit_training
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import AutoTokenizer
 
-from src.configs import fsdp_config as FSDP_CONFIG
-from src.configs import lora_config as LORA_CONFIG
-from src.configs import train_config as TRAIN_CONFIG
+from src.configs import FsdpConfig, LoraConfig, TrainConfig
 from src.model_utils import (
     get_lora_model_from_base_model,
     get_submodule_by_pattern,
@@ -34,9 +31,9 @@ class LlamaQA(torch.nn.Module):
 
     def __init__(
         self,
-        train_config: TRAIN_CONFIG,
-        fsdp_config: FSDP_CONFIG,
-        lora_config: LORA_CONFIG,
+        train_config: TrainConfig,
+        fsdp_config: FsdpConfig,
+        lora_config: LoraConfig,
         local_rank: int = 0,
         rank: int = 0,
     ) -> None:
@@ -68,16 +65,13 @@ class LlamaQA(torch.nn.Module):
             use_mp=fsdp_config.mixed_precision,
             low_cpu_mem_usage=train_config.low_cpu_mem_usage,
             local_rank=self.local_rank,
-            load_in_8bit=True if train_config.quantization else False,
         )
 
         # let fsdp handle this extra module to the devices.
         model.loss_func = loss_func
 
         # Load the tokenizer and add special tokens
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            train_config.model_name if train_config.tokenizer_name == "" else train_config.tokenizer_name, padding_side="left"
-        )
+        self.tokenizer = AutoTokenizer.from_pretrained(train_config.model_name, padding_side="left")
         self.tokenizer.add_special_tokens(_EXTRA_TOKENS)
 
         # If there is a mismatch between tokenizer vocab size and embedding matrix,
@@ -101,10 +95,6 @@ class LlamaQA(torch.nn.Module):
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
         print_model_size(model, train_config, self.rank)
-
-        # Prepare the model for int8 training if quantization is enabled
-        if train_config.quantization:
-            model = prepare_model_for_kbit_training(model)
 
         if train_config.use_peft:
             # Load the pre-trained peft model checkpoint and setup its configuration
@@ -179,13 +169,13 @@ class LlamaQA(torch.nn.Module):
     def predict_mode_on(self) -> None:
         """For each iteration of prediction over batch, clear gpu cache, turn
         on eval mode."""
-        clear_gpu_cache(self.rank)
+        clear_gpu_cache()
         self.model.eval()
 
     def train_mode_on(self) -> None:
         """Before every forward-backward iteration over batch, clear gpu cache,
         turn on train mode!"""
-        clear_gpu_cache(self.rank)
+        clear_gpu_cache()
         self.model.train()
 
     def data_to_device(self, batch: torch.utils.data.Dataset, keys: List[str]) -> Dict[str, torch.Tensor]:
