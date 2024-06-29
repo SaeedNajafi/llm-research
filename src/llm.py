@@ -1,4 +1,4 @@
-"""The main module to load llama3 with the chat prompt."""
+"""The main module to train or make inference with llm."""
 
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -21,36 +21,33 @@ from src.utils.train_utils import clear_gpu_cache, print_model_size
 
 # Make sure we have some tokens defined for the LM, if not defined in the model.
 # Specific for Llama3
-_EXTRA_TOKENS = {
+_LLAMA3_EXTRA_TOKENS = {
     "pad_token": "<|reserved_special_token_0|>",
 }
 
 
-class LlamaQA(torch.nn.Module):
-    """Class to implement Llama3."""
+class LLM(torch.nn.Module):
+    """Class to implement LLM."""
 
     def __init__(
         self,
+        llm_name: str,
         train_config: TrainConfig,
         fsdp_config: FsdpConfig,
         lora_config: LoraConfig,
+        extra_tokens: Optional[Dict[str, str]] = None,
         local_rank: int = 0,
         rank: int = 0,
     ) -> None:
         super().__init__()
 
+        self.llm_name = llm_name
         self.train_config = train_config
         self.fsdp_config = fsdp_config
         self.lora_config = lora_config
         self.rank = rank
         self.local_rank = local_rank
-
-        # Chat templates for llama3.
-        self.llama3_instruction_llama = (
-            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
-        )
-        self.llama3_input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
-        self.llama3_output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|eot_id|>"
+        self.terminators: List[int | List[int]] = []
 
         # We will compute per token log probabilities.
         # pad tokens have index -100 in huggingface.
@@ -61,7 +58,7 @@ class LlamaQA(torch.nn.Module):
 
         model = load_model(
             train_config.model_name,
-            use_fa=train_config.use_fast_kernels,
+            attn_implementation=train_config.attn_implementation,
             use_mp=fsdp_config.mixed_precision,
             low_cpu_mem_usage=train_config.low_cpu_mem_usage,
             local_rank=self.local_rank,
@@ -72,7 +69,9 @@ class LlamaQA(torch.nn.Module):
 
         # Load the tokenizer and add special tokens
         self.tokenizer = AutoTokenizer.from_pretrained(train_config.model_name, padding_side="left")
-        self.tokenizer.add_special_tokens(_EXTRA_TOKENS)
+
+        if extra_tokens is not None:
+            self.tokenizer.add_special_tokens(extra_tokens)
 
         # If there is a mismatch between tokenizer vocab size and embedding matrix,
         # throw a warning and then expand the embedding matrix
@@ -85,14 +84,12 @@ class LlamaQA(torch.nn.Module):
             else:
                 raise Exception("No CUDA Found!")
 
-        # re-define token ids for the model.
-        for extra_token_key, extra_token_val in _EXTRA_TOKENS.items():
-            extra_token_id = self.tokenizer.convert_tokens_to_ids([extra_token_val])[0]
-            model.config.__setattr__(f"{extra_token_key}_id", extra_token_id)
-            model.generation_config.__setattr__(f"{extra_token_key}_id", extra_token_id)
-
-        # required for llama3.
-        self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+        if extra_tokens is not None:
+            # re-define token ids for the model.
+            for extra_token_key, extra_token_val in extra_tokens.items():
+                extra_token_id = self.tokenizer.convert_tokens_to_ids([extra_token_val])[0]
+                model.config.__setattr__(f"{extra_token_key}_id", extra_token_id)
+                model.generation_config.__setattr__(f"{extra_token_key}_id", extra_token_id)
 
         print_model_size(model, train_config, self.rank)
 
@@ -184,8 +181,8 @@ class LlamaQA(torch.nn.Module):
         return {key: batch[key].to(self.device) for key in keys}
 
     def train(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
-        """Using the Llama, run a forward computation over the batch, compute
-        the log probability over the batch.
+        """Using the llm, run a forward computation over the batch, compute the
+        log probability over the batch.
 
         This will be used for training.
         """
@@ -211,7 +208,7 @@ class LlamaQA(torch.nn.Module):
             return llama_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.model.loss_func)
 
     def generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
-        """Using the Llama, generate new text.
+        """Using the llm, generate new text.
 
         This will be used for inference.
         """
@@ -262,3 +259,47 @@ class LlamaQA(torch.nn.Module):
                 # Somehow gold_answers becomes a tuple.
                 output_row["gold_answer"] = batch["gold_answers"][idx]
             yield output_row, loss
+
+
+class Llama3QA(LLM):
+    """Class to implement Llama3."""
+
+    def __init__(
+        self,
+        train_config: TrainConfig,
+        fsdp_config: FsdpConfig,
+        lora_config: LoraConfig,
+        local_rank: int = 0,
+        rank: int = 0,
+    ) -> None:
+        super().__init__("llama3", train_config, fsdp_config, lora_config, _LLAMA3_EXTRA_TOKENS, local_rank, rank)
+
+        # Chat templates for llama3.
+        self.instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
+        self.input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
+        self.output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|eot_id|>"
+
+        # required for llama3.
+        self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+
+
+class Gemma2QA(LLM):
+    """Class to implement Gemma2."""
+
+    def __init__(
+        self,
+        train_config: TrainConfig,
+        fsdp_config: FsdpConfig,
+        lora_config: LoraConfig,
+        local_rank: int = 0,
+        rank: int = 0,
+    ) -> None:
+        super().__init__("gemma2", train_config, fsdp_config, lora_config, None, local_rank, rank)
+
+        # Chat templates for gemma2.
+        self.instruction_template = "<bos><start_of_turn>user\n{instruction} <end_of_turn>"
+        self.input_template = "<start_of_turn>user\n{input} <end_of_turn>"
+        self.output_template = "<start_of_turn>model\n{output} <end_of_turn>"
+
+        # required for gemma2.
+        self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<end_of_turn>")]

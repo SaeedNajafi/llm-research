@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=llama3-multinode
-#SBATCH --nodes=4
+#SBATCH --job-name=llama3-multigpu
+#SBATCH --nodes=1
 #SBATCH --mem=0
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
@@ -8,10 +8,10 @@
 #SBATCH --output=llama3.%j.out
 #SBATCH --error=llama3.%j.err
 #SBATCH --partition=a40
-#SBATCH --qos=m3
+#SBATCH --qos=m
 #SBATCH --open-mode=append
 #SBATCH --wait-all-nodes=1
-#SBATCH --time=02:00:00
+#SBATCH --time=12:00:00
 
 date;hostname;pwd
 
@@ -46,4 +46,4 @@ srun -p $SLURM_JOB_PARTITION \
     --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
     --rdzv-id $RDVZ_ID \
     --rdzv-backend c10d \
-    src/squadv2_llama3_finetuning.py'
+    src/squadv2_finetuning.py'

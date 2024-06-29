@@ -9,20 +9,24 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 @dataclass
 class TrainConfig:
     model_name: str = "/model-weights/Meta-Llama-3-8B-Instruct"
+    llm_name: str = "llama3"
+    # model_name: str = "google/gemma-2-9b-it"
+    # llm_name: str = "gemma2"
+    mode: str = "train"
     experiment_type: str = "normal_no_icl"
     train_file_name: str = "./notebooks/1024-shot-datasets/squad/1024-13-train.tsv"
     dev_file_name: str = "./notebooks/1024-shot-datasets/squad/1024-13-dev.tsv"
-    test_file_name: str = "./notebooks/1024-shot-datasets/squad/1024-13-dev.tsv"
-    prediction_file_name: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3/squadv2.dev.results.csv"
-    output_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3"
+    test_file_name: str = "./notebooks/1024-shot-datasets/squad/original_validation.tsv"
+    prediction_file_name: str = "/scratch/ssd004/scratch/snajafi/checkpoints/gemma2-1024-13/squadv2.results.csv"
+    output_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/gemma2-1024-13"
 
     # will be used if using FSDP
-    dist_checkpoint_root_folder: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3"
+    dist_checkpoint_root_folder: str = "/scratch/ssd004/scratch/snajafi/checkpoints/gemma2-1024-13"
     dist_checkpoint_folder: str = "fine-tuned"  # will be used if using FSDP
 
     checkpoint_on_metric: str = "squadv2_metrics_f1"
     run_validation: bool = True
-    batch_size_training: int = 16
+    batch_size_training: int = 8
     gradient_accumulation_steps: int = 1
     gradient_clipping: bool = True
     gradient_clipping_threshold: float = 1.0
@@ -39,25 +43,25 @@ class TrainConfig:
     lr: float = 5e-5
     eta_min: float = 1e-5
     weight_decay: float = 0.001
-    seed: int = 42
-    val_batch_size: int = 16
+    seed: int = 13
+    val_batch_size: int = 8
     peft_method: str = "lora"
     use_peft: bool = True
     from_peft_checkpoint: str = ""
     save_model: bool = True
 
     save_optimizer: bool = True  # will be used if using FSDP
-    use_fast_kernels: bool = True
+    attn_implementation: str = "eager"  # "flash_attention_2"
     use_wandb: bool = True  # Enable wandb for experient tracking
     save_metrics: bool = True  # saves training metrics to a json file for later plotting
     use_profiler: bool = False
-    profiler_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3/profiler"  # will be used if using profiler
+    profiler_dir: str = "/scratch/ssd004/scratch/snajafi/checkpoints/gemma2-1024-13/profiler"  # will be used if using profiler
 
 
 @dataclass
 class LoraConfig:
-    r: int = 1024
-    lora_alpha: int = 1024
+    r: int = 512
+    lora_alpha: int = 512
     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj", "o_proj", "k_proj"])
     lora_dropout: float = 0.3
     task_type: TaskType = TaskType.CAUSAL_LM
@@ -81,7 +85,7 @@ class WandbConfig:
     entity: Optional[str] = None  # wandb entity name
     job_type: Optional[str] = None
     tags: Optional[List[str]] = None
-    group: Optional[str] = "llama3-squadv2-experiments"
+    group: Optional[str] = "squadv2-experiments"
     notes: Optional[str] = "tuning weights"
     mode: Optional[str] = None
 
