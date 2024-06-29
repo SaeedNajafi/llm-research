@@ -62,7 +62,7 @@ def get_lora_model_from_base_model(
 def load_model(
     path: str,
     use_mp: bool,
-    use_fa: bool,
+    attn_implementation: str,
     local_rank: int,
     low_cpu_mem_usage: bool,
     use_safetensors: bool = True,
@@ -89,11 +89,11 @@ def load_model(
 
     if use_mp:
         model_args["torch_dtype"] = torch.bfloat16
-    if use_fa:
+    if attn_implementation != "":
         if not use_mp:
             msg = "Use FA with bf16 (mixed precision)"
             raise ValueError(msg)
-        model_args["attn_implementation"] = "flash_attention_2"
+        model_args["attn_implementation"] = attn_implementation
 
     if not low_cpu_mem_usage or local_rank == 0:
         model = AutoModelForCausalLM.from_pretrained(

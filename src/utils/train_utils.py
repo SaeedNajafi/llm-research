@@ -222,7 +222,15 @@ def train(
         model.scheduler.step()
         if train_config.run_validation:
             eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores = evaluation(
-                model, train_config, eval_dataloader, train_config.prediction_file_name, rank, world_size, wandb_run, metric
+                model,
+                "eval",
+                train_config,
+                eval_dataloader,
+                train_config.prediction_file_name,
+                rank,
+                world_size,
+                wandb_run,
+                metric,
             )
             if train_config.save_metrics:
                 val_step_loss.extend(temp_val_loss)
@@ -316,6 +324,7 @@ def train(
 
 def evaluation(
     model: Any,
+    eval_type: str,
     train_config: TrainConfig,
     eval_dataloader: torch.utils.data.DataLoader,
     prediction_file_name: str,
@@ -338,7 +347,9 @@ def evaluation(
     eval_loss: float = 0.0  # Initialize evaluation loss
     total_eval_steps: float = 0
     with MemoryTrace() as memtrace:
-        with io.open(f"{prediction_file_name.rstrip('.csv')}_rank_{rank}.csv", mode="w", encoding="utf-8") as out_fp:
+        with io.open(
+            f"{prediction_file_name.rstrip('.csv')}_{eval_type}_rank_{rank}.csv", mode="w", encoding="utf-8"
+        ) as out_fp:
             writer = csv.writer(out_fp, quotechar='"', quoting=csv.QUOTE_ALL)
             header_written = False
             for step, batch in enumerate(tqdm(eval_dataloader, colour="green", desc="evaluating Epoch", dynamic_ncols=True)):
@@ -366,7 +377,7 @@ def evaluation(
     if rank == 0:
         memtrace.print_stats()
 
-    scores = metric(f"{prediction_file_name.rstrip('.csv')}_rank_{rank}.csv")
+    scores = metric(f"{prediction_file_name.rstrip('.csv')}_{eval_type}_rank_{rank}.csv")
     for score_name, score_val in scores.items():
         val_scores[score_name] = torch.tensor(score_val, dtype=torch.float64, device=model.device)
 
@@ -391,18 +402,18 @@ def evaluation(
         float_val_socres[score_name] = float(score_val)
 
     if rank == 0:
-        message = f"eval_ppl={eval_ppl} eval_epoch_loss={eval_epoch_loss}"
+        message = f"{eval_type}_ppl={eval_ppl} {eval_type}_epoch_loss={eval_epoch_loss}"
         for score_name, score_val in float_val_socres.items():
             message += f" {score_name}={score_val}"
         print(message)
 
         if wandb_run:
             log_data = {
-                "eval/perplexity": eval_ppl,
-                "eval/loss": eval_epoch_loss,
+                f"{eval_type}/perplexity": eval_ppl,
+                f"{eval_type}/loss": eval_epoch_loss,
             }
             for score_name, score_val in float_val_socres.items():
-                log_data[f"eval/{score_name}"] = score_val
+                log_data[f"{eval_type}/{score_name}"] = score_val
             wandb_run.log(log_data, commit=False)
 
     return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity, float_val_socres

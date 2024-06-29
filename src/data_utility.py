@@ -15,12 +15,12 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from src.general_utils import DictDataset, white_space_fix
-from src.llama3 import LlamaQA
-from src.squadv2_llama3_instructions import explanation_icl_input, explanation_instruction, normal_icl_input, normal_instruction
+from src.llm import LLM
+from src.squadv2_instructions import explanation_icl_input, explanation_instruction, normal_icl_input, normal_instruction
 
 
-def process_squad_dataset(
-    file_name: str, experiment_type: str, llama3_instruction_llama: str, llama3_input_template: str, llama3_output_template: str
+def process_squadv2_dataset(
+    file_name: str, experiment_type: str, instruction_template: str, input_template: str, output_template: str
 ) -> Tuple[List[str], List[str], List[str], List[str]]:
     """Read and pre-process the squadv2 dataset for my application."""
 
@@ -38,7 +38,7 @@ def process_squad_dataset(
     elif experiment_type == "explanation_no_icl":
         instruction = explanation_instruction
 
-    llama3_instruction = llama3_instruction_llama.format(instruction=instruction)
+    formed_instruction = instruction_template.format(instruction=instruction)
 
     next_example_number = 11 if "_no_" not in experiment_type else -1
     squad_inputs = []
@@ -70,8 +70,8 @@ def process_squad_dataset(
             user_final_message += f"\nQuestion: {question}"
             user_final_message += "\nExplanations and Thought Process and Final Answer: "
 
-        llama3_input = llama3_input_template.format(input=user_final_message)
-        squad_input = f"{llama3_instruction}{llama3_input}"
+        formed_input = input_template.format(input=user_final_message)
+        squad_input = f"{formed_instruction}{formed_input}"
         squad_inputs.append(squad_input)
         squad_ids.append(str(idx))
 
@@ -79,16 +79,16 @@ def process_squad_dataset(
         gold_answer = random.choice(gold_answers)
 
         if experiment_type == "normal_icl":
-            squad_output = llama3_output_template.format(output=f"Final Answer_{next_example_number}: {gold_answer}")
+            squad_output = output_template.format(output=f"Final Answer_{next_example_number}: {gold_answer}")
             squad_outputs.append(squad_output)
         elif experiment_type == "normal_no_icl":
-            squad_output = llama3_output_template.format(output=f"Final Answer: {gold_answer}")
+            squad_output = output_template.format(output=f"Final Answer: {gold_answer}")
             squad_outputs.append(squad_output)
     return squad_inputs, squad_ids, squad_outputs, gold_outputs
 
 
 def create_squadv2_dataloader(
-    model: LlamaQA,
+    model: LLM,
     file_name: str,
     fold_name: str,
     experiment_type: str,
@@ -98,8 +98,8 @@ def create_squadv2_dataloader(
 ) -> DataLoader:
     """Function to create the required dataloader to train the LM models."""
 
-    squad_inputs, squad_ids, squad_outputs, gold_outputs = process_squad_dataset(
-        file_name, experiment_type, model.llama3_instruction_llama, model.llama3_input_template, model.llama3_output_template
+    squad_inputs, squad_ids, squad_outputs, gold_outputs = process_squadv2_dataset(
+        file_name, experiment_type, model.instruction_template, model.input_template, model.output_template
     )
 
     if fold_name == "train":
