@@ -1,4 +1,4 @@
-from src.general_utils import white_space_fix
+from src.utils.general_utils import white_space_fix
 
 # Example context, question from squad.
 contexts = [

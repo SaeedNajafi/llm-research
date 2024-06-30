@@ -1,14 +1,18 @@
+"""Functions to compute log likelihood from the transformer models.
+
+Also, it has functions to load model, peft config, and fsdp strategy for
+the model.
+"""
+
 import functools
 import os
-import random
 import re
-from dataclasses import asdict
 from typing import Any, Callable, Dict
 
-import numpy
 import torch
 import torch.distributed as dist
-from peft import LoraConfig, PeftModel, get_peft_model
+from absl import flags, logging
+from peft import LoraConfig, PeftModel, TaskType, get_peft_model
 from torch import nn
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     CheckpointImpl,
@@ -20,22 +24,32 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataP
 from torch.distributed.fsdp.wrap import _or_policy, lambda_auto_wrap_policy, transformer_auto_wrap_policy
 from transformers import AutoModelForCausalLM, PreTrainedModel
 
-from src.configs import LoraConfig as MyLoraConfig
+from src.utils.save_utils import get_latest_checkpoint_dir
+
+FLAGS = flags.FLAGS
+
+# Lora related arguments.
+flags.DEFINE_integer("r", 512, "rank in the lora.")
+flags.DEFINE_integer("lora_alpha", 512, "alpha hyper-parameter in lora.")
+flags.DEFINE_float("lora_dropout", 0.3, "dropout in lora", upper_bound=0.5, lower_bound=0.0)
+flags.DEFINE_list("target_modules", "q_proj,v_proj,o_proj,k_proj", "target modules in the lora.")
+flags.DEFINE_string("path_to_peft_adapter_to_restore", "", "path where the adapter is.")
+flags.DEFINE_boolean("use_peft", True, "whether to use peft for training or not?")
+
+# FSDP related arguments.
+flags.DEFINE_boolean("low_cpu_mem_usage", True, "helpful for fsdp?")
+flags.DEFINE_boolean("use_mp", True, "mixed precision training?")
+flags.DEFINE_string("attn_implementation", "flash_attention_2", "flash_attention_2 | eager")
+flags.DEFINE_boolean("use_activation_checkpointing", True, "whether to use activation checkpointing.")
+flags.DEFINE_string("sharding_strategy", "NO_SHARD", "NO_SHARD | HYBRID_SHARD | SHARD_GRAD_OP")
 
 
-def get_lora_model_from_base_model(
-    base_model: PreTrainedModel,
-    lora_config: MyLoraConfig,
-    path_to_peft_adapter_to_restore: str | None = None,
-) -> PeftModel:
+def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
     """Initialize lora peft configuration from a non-lora model.
 
     Args:
     ----
         base_model: HuggingFace Transformer model to wrap.
-        path_to_peft_adapter_to_restore: optionally, initialize peft adapters
-            using tensors loaded from the filesystem.
-
     Returns:
     -------
         PeftModel
@@ -43,15 +57,29 @@ def get_lora_model_from_base_model(
     # See github.com/pytorch/pytorch/pull/102212
     base_model.load_state_dict(base_model.state_dict(), assign=True)
 
-    if path_to_peft_adapter_to_restore is not None:
+    if FLAGS.path_to_peft_adapter_to_restore != "":
+        checkpoint_path = os.path.join(FLAGS.path_to_peft_adapter_to_restore, "checkpoints")
+        peft_adapter_path = os.path.join(checkpoint_path, get_latest_checkpoint_dir(checkpoint_path))
         lora_model = PeftModel.from_pretrained(
             base_model,
-            path_to_peft_adapter_to_restore,
+            peft_adapter_path,
             is_trainable=True,
         )
-        print(f"Restored peft_adapter from {path_to_peft_adapter_to_restore}.")
+        logging.info(f"Restored peft_adapter from {peft_adapter_path}.")
+        base_model.is_peft_adapter_restored = True
+
     else:
-        lora_model = get_peft_model(base_model, LoraConfig(**asdict(lora_config)))
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            inference_mode=False,
+            r=FLAGS.r,
+            lora_alpha=FLAGS.lora_alpha,
+            lora_dropout=FLAGS.lora_dropout,
+            bias="none",
+            init_lora_weights=True,
+            target_modules=FLAGS.target_modules,
+        )
+        lora_model = get_peft_model(base_model, lora_config)
 
     lora_model = lora_model.bfloat16()
     assert isinstance(lora_model, PeftModel)
@@ -61,10 +89,7 @@ def get_lora_model_from_base_model(
 
 def load_model(
     path: str,
-    use_mp: bool,
-    attn_implementation: str,
     local_rank: int,
-    low_cpu_mem_usage: bool,
     use_safetensors: bool = True,
 ) -> PreTrainedModel:
     """Load the model.
@@ -72,11 +97,7 @@ def load_model(
     Args:
     ----
         path: The path where the model and tokenizer are stored.
-        use_mp: Whether to use mixed-precision.
-        use_fa: Whether to use Flash Attention 2.
         local_rank: The local rank of the current worker.
-        low_cpu_mem_usage: Whether to only load model weights on main rank, and
-            then scatter them to the other workers.
         use_safetensors: Whether to use HF safe tensors. Note that this format
             loads significantly faster.
 
@@ -87,15 +108,15 @@ def load_model(
     # load model
     model_args: Dict[str, Any] = {"use_cache": False, "use_safetensors": use_safetensors}
 
-    if use_mp:
+    if FLAGS.use_mp:
         model_args["torch_dtype"] = torch.bfloat16
-    if attn_implementation != "":
-        if not use_mp:
+    if FLAGS.attn_implementation != "":
+        if not FLAGS.use_mp:
             msg = "Use FA with bf16 (mixed precision)"
             raise ValueError(msg)
-        model_args["attn_implementation"] = attn_implementation
+        model_args["attn_implementation"] = FLAGS.attn_implementation
 
-    if not low_cpu_mem_usage or local_rank == 0:
+    if not FLAGS.low_cpu_mem_usage or local_rank == 0:
         model = AutoModelForCausalLM.from_pretrained(
             path,
             **model_args,
@@ -125,24 +146,15 @@ def lora_requires_grad_policy_fn(module: nn.Module) -> bool:
 
 
 def fsdp_config(
-    use_mp: bool,
     layer_to_wrap: nn.Module,
-    strategy: str,
     local_rank: int,
-    low_cpu_mem_usage: bool,
-    is_lora_enabled: bool = False,
 ) -> Dict[str, Any]:
     """Get FSDP config.
 
     Args:
     ----
-        use_mp: Whether to use mixed-precision.
         layer_to_wrap: The layer we are wrapping using FSDP.
-        strategy: The sharding strategy to use.
         local_rank: The local rank of the current worker.
-        low_cpu_mem_usage: Whether to only load model weights on main rank, and
-            then scatter them to the other workers.
-        is_lora_enabled: Whether to enable LoRA support.
 
     Returns:
     -------
@@ -157,13 +169,13 @@ def fsdp_config(
             recurse=False,
         )
 
-    strategy_exists = hasattr(ShardingStrategy, strategy)
+    strategy_exists = hasattr(ShardingStrategy, FLAGS.sharding_strategy)
     if not strategy_exists:
-        msg = f"The sharding strategy {strategy} does not exist."
+        msg = f"The sharding strategy {FLAGS.sharding_strategy} does not exist."
         raise ValueError(msg)
 
     ret_dict = {}
-    if use_mp:
+    if FLAGS.use_mp:
         mp_policy = MixedPrecision(
             param_dtype=torch.bfloat16,
             buffer_dtype=torch.bfloat16,
@@ -176,7 +188,7 @@ def fsdp_config(
         transformer_layer_cls={layer_to_wrap},
     )
 
-    if is_lora_enabled:
+    if FLAGS.use_peft:
         # turns off FSDP Flat Param in LoRA layers.
         lambda_requires_grad_policy = functools.partial(
             lambda_auto_wrap_policy,
@@ -189,13 +201,13 @@ def fsdp_config(
     else:
         auto_wrap_policy = transformer_wrap_policy
 
-    sharding_strategy = getattr(ShardingStrategy, strategy)
+    sharding_strategy = getattr(ShardingStrategy, FLAGS.sharding_strategy)
 
     ret_dict["auto_wrap_policy"] = auto_wrap_policy
     ret_dict["sharding_strategy"] = sharding_strategy
     ret_dict["device_id"] = torch.cuda.current_device()
     ret_dict["forward_prefetch"] = True
-    if low_cpu_mem_usage:
+    if FLAGS.low_cpu_mem_usage:
         ret_dict["param_init_fn"] = _module_init_fn if local_rank != 0 else None
         ret_dict["sync_module_states"] = True
     return ret_dict
@@ -204,12 +216,7 @@ def fsdp_config(
 def shard_model(
     model: nn.Module,
     layer_to_wrap: type[nn.Module],
-    use_mp: bool,
-    use_activation_checkpointing: bool,
-    strategy: str,
     local_rank: int,
-    low_cpu_mem_usage: bool,
-    is_lora_enabled: bool = False,
 ) -> nn.Module:
     """Shard the model to workers using FSDP.
 
@@ -217,38 +224,23 @@ def shard_model(
     ----
         model: The model to be sharded.
         layer_to_wrap: The layer we are wrapping using FSDP.
-        use_mp: Whether to use mixed-precision.
-        use_activation_checkpointing: Whether to use activation checkpointing.
-        strategy: The sharding strategy to use.
         local_rank: The local rank of the current worker.
-        low_cpu_mem_usage: Whether to only load model weights on main rank, and
-            then scatter them to the other workers.
-        is_lora_enabled: Whether to enable support for LoRA, where requires_grad
-            is True for only a subset of parameter tensors. Enabling might
-            significantly reduce training throughput, so enable this only when
-            actually using LoRA.
 
     Returns:
     -------
         The sharded module with the requested configurations.
     """
     fsdp_cfg = fsdp_config(
-        use_mp,
         layer_to_wrap,
-        strategy,
         local_rank,
-        low_cpu_mem_usage,
-        is_lora_enabled,
     )
     if dist.get_rank() == 0:
         print(f"FSDP config: {fsdp_cfg}")
     model = FSDP(model, **fsdp_cfg)
-    print(
-        "Model sharded. Per device model parameters are ",
-        f"{sum(p.numel() for p in model.parameters())}",
-    )
+    msg = f"Model sharded. Per device model parameters are {sum(p.numel() for p in model.parameters())}"
+    logging.info(msg)
 
-    if use_activation_checkpointing:
+    if FLAGS.use_activation_checkpointing:
         hook_activation_checkpointing(model, layer_to_wrap)
     return model
 
@@ -330,22 +322,6 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-def optimizer_to(optim: torch.optim.Optimizer, device: str) -> None:
-    """Move the optimizer to a specific device."""
-    for param in optim.state.values():
-        # Not sure there are any global tensors in the state dict
-        if isinstance(param, torch.Tensor):
-            param.data = param.data.to(device)
-            if param._grad is not None:
-                param._grad.data = param._grad.data.to(device)
-        elif isinstance(param, dict):
-            for subparam in param.values():
-                if isinstance(subparam, torch.Tensor):
-                    subparam.data = subparam.data.to(device)
-                    if subparam._grad is not None:
-                        subparam._grad.data = subparam._grad.data.to(device)
-
-
 def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits.
 
@@ -398,7 +374,9 @@ def encoder_decoder_log_of_labels(
     return log_of_labels(output.logits, labels, loss_func)
 
 
-def llama_log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+def decoder_only_log_of_labels(
+    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss
+) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits."""
 
     # Shift so that tokens < n predict n
@@ -424,20 +402,16 @@ def lm_logits(
     return output.logits
 
 
-def set_random_seed(seed: int) -> None:
-    """Set the random seed, which initializes the random number generator.
+def print_model_size(model: torch.nn.Module, model_path: str, rank: int = 0) -> None:
+    """Print model name, the number of trainable parameters and initialization
+    time.
 
-    Ensures that runs are reproducible and eliminates differences due to
-    randomness.
+    Args:
+        model: The PyTorch model.
+        model_path: name or path for model.
+        rank (int, optional): Current process's rank. Defaults to 0.
     """
-    random.seed(seed)
-    numpy.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-    os.environ["TF_DETERMINISTIC_OPS"] = "1"
+    if rank == 0:
+        logging.info(f"--> Model {model_path}")
+        total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logging.info(f"--> {model_path} has {total_params / 1e6} Million params.")

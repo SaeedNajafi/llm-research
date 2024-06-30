@@ -7,24 +7,37 @@
 import os
 from typing import Any
 
-import fire
 import torch
+import wandb
+from absl import app, flags
 
-from src.configs import FsdpConfig, LoraConfig, TrainConfig, setup_wandb, update_config
-from src.data_utility import create_squadv2_dataloader
 from src.llm import Gemma2QA, Llama3QA
 from src.metrics import qa_metric_squadv2_metrics
-from src.model_utils import set_random_seed
-from utils.train_utils import clear_gpu_cache, evaluation, setup, setup_environ_flags, train
+from src.utils.data_utility import create_squadv2_dataloader
+from src.utils.general_utils import clear_gpu_cache, set_random_seed
+from src.utils.train_utils import evaluation, setup, setup_environ_flags, train
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("mode", "train", "train | inference")
+flags.DEFINE_float("seed", 42, "random seed.")
+flags.DEFINE_string("project_name", "llm_research", "name for these runs.")
+flags.DEFINE_string("experiment_type", "normal_no_icl", "normal_no_icl | normal_icl | explanation_icl | explanation_no_icl")
 
 
-def main(**kwargs: Any) -> None:
-    # Update the configuration for the training and sharding process
-    train_config, fsdp_config, lora_config = TrainConfig(), FsdpConfig(), LoraConfig()
-    update_config((train_config, fsdp_config, lora_config), **kwargs)
+def setup_wandb() -> Any:
+    """Setup the wandb account."""
+    init_dict = {"project": FLAGS.project_name}
+    run = wandb.init(**init_dict)
+    wandb.config.update(FLAGS)
+    return run
+
+
+def main(argv: Any) -> None:
+    del argv
 
     # Set the seeds for reproducibility
-    set_random_seed(train_config.seed)
+    set_random_seed(FLAGS.seed)
 
     setup()
     # torchrun specific
@@ -39,43 +52,35 @@ def main(**kwargs: Any) -> None:
         setup_environ_flags(rank)
 
     wandb_run = None
-
-    if train_config.use_wandb:
-        if rank == 0:
-            wandb_run = setup_wandb(train_config, fsdp_config, lora_config, **kwargs)
-
-    if train_config.mode == "inference":
-        # load the best model.
-        train_config.from_peft_checkpoint = train_config.output_dir
+    if rank == 0:
+        wandb_run = setup_wandb()
 
     # Initialize the model here.
-    if train_config.llm_name == "gemma2":
-        model = Gemma2QA(train_config, fsdp_config, lora_config, local_rank, rank)
+    if FLAGS.llm_name == "gemma2":
+        model = Gemma2QA(local_rank, rank)
 
-    elif train_config.llm_name == "llama3":
-        model = Llama3QA(train_config, fsdp_config, lora_config, local_rank, rank)
+    elif FLAGS.llm_name == "llama3":
+        model = Llama3QA(local_rank, rank)
 
     if wandb_run:
-        if train_config.use_peft:
+        if FLAGS.use_peft:
             wandb_run.config.update(model.peft_config)
 
-    if train_config.mode == "train":
+    if FLAGS.mode == "train":
         train_dataloader = create_squadv2_dataloader(
             model,
-            train_config.train_file_name,
             fold_name="train",
-            experiment_type=train_config.experiment_type,
-            batch_size=train_config.batch_size_training,
+            experiment_type=FLAGS.experiment_type,
+            batch_size=FLAGS.train_batch_size,
             world_size=world_size,
             rank=rank,
         )
 
         eval_dataloader = create_squadv2_dataloader(
             model,
-            train_config.dev_file_name,
             fold_name="dev",
-            experiment_type=train_config.experiment_type,
-            batch_size=train_config.val_batch_size,
+            experiment_type=FLAGS.experiment_type,
+            batch_size=FLAGS.eval_batch_size,
             world_size=world_size,
             rank=rank,
         )
@@ -85,44 +90,38 @@ def main(**kwargs: Any) -> None:
             model,
             train_dataloader,
             eval_dataloader,
-            train_config,
-            fsdp_config,
             rank,
             world_size,
             wandb_run,
             qa_metric_squadv2_metrics,
         )
+        if rank == 0:
+            if FLAGS.use_wandb:
+                for k, v in results.items():
+                    wandb_run.summary[k] = v
 
-    elif train_config.mode == "inference":
+    elif FLAGS.mode == "inference":
         test_dataloader = create_squadv2_dataloader(
             model,
-            train_config.test_file_name,
             fold_name="test",
-            experiment_type=train_config.experiment_type,
-            batch_size=train_config.val_batch_size,
+            experiment_type=FLAGS.experiment_type,
+            batch_size=FLAGS.eval_batch_size,
             world_size=world_size,
             rank=rank,
         )
 
         # Start the test process
-        results = evaluation(
+        evaluation(
             model,
             "test",
-            train_config,
             test_dataloader,
-            train_config.prediction_file_name,
+            FLAGS.prediction_file,
             rank,
             world_size,
             wandb_run,
             qa_metric_squadv2_metrics,
         )
 
-    if rank == 0:
-        [print(f"Key: {k}, Value: {v}") for k, v in results.items()]
-        if train_config.use_wandb:
-            for k, v in results.items():
-                wandb_run.summary[k] = v
-
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    app.run(main)

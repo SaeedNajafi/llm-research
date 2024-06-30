@@ -14,7 +14,7 @@ from peft import PeftModel
 from sentence_transformers import SentenceTransformer
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-from src.utils.train_utils import clear_gpu_cache
+from src.utils.general_utils import clear_gpu_cache
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:1", "The device per node to calculate the metric.")
