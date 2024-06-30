@@ -8,15 +8,53 @@ with other components (optimizer, model, etc.)
 
 import ast
 import random
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
-from torch.utils.data import DataLoader
+import torch
+from absl import flags
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 
-from src.general_utils import DictDataset, white_space_fix
 from src.llm import LLM
 from src.squadv2_instructions import explanation_icl_input, explanation_instruction, normal_icl_input, normal_instruction
+from src.utils.general_utils import white_space_fix
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_string("dev_file", "/tmp/dev.csv", "the path/name of the dev file.")
+flags.DEFINE_string("test_file", "/tmp/test.csv", "the path/name of the test file.")
+flags.DEFINE_string("train_file", "/tmp/train.csv", "the path/name of the train file.")
+flags.DEFINE_string("prediction_file", "/tmp/predictions.csv", "the path/name of the prediction file.")
+
+
+class DictDataset(Dataset):
+    """Subclass the pytorch's Dataset to build my own dataset for the text
+    tasks.
+
+    May need to return actual text instead of ids for better processing
+    in the code.
+    """
+
+    def __init__(self, data: Dict[str, Any]) -> None:
+        """Store the reference to the tokenized data."""
+        self.data = data
+        self.keys = list(self.data.keys())
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """Return the elements for example index 'idx' as a dictionary with
+        tensor values or just strings."""
+        ret = {}
+        for key, val in self.data.items():
+            if isinstance(val[idx], str) or isinstance(val[idx], torch.Tensor):
+                ret[key] = val[idx]
+            else:
+                ret[key] = torch.tensor(val[idx])
+        return ret
+
+    def __len__(self) -> int:
+        """Return the length of the data."""
+        return len(self.data[self.keys[0]])
 
 
 def process_squadv2_dataset(
@@ -89,7 +127,6 @@ def process_squadv2_dataset(
 
 def create_squadv2_dataloader(
     model: LLM,
-    file_name: str,
     fold_name: str,
     experiment_type: str,
     batch_size: int = 1,
@@ -97,6 +134,13 @@ def create_squadv2_dataloader(
     rank: int = 0,
 ) -> DataLoader:
     """Function to create the required dataloader to train the LM models."""
+
+    if fold_name == "train":
+        file_name = FLAGS.train_file
+    elif fold_name == "dev":
+        file_name = FLAGS.dev_file
+    elif fold_name == "test":
+        file_name = FLAGS.test_file
 
     squad_inputs, squad_ids, squad_outputs, gold_outputs = process_squadv2_dataset(
         file_name, experiment_type, model.instruction_template, model.input_template, model.output_template

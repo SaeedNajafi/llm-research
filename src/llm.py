@@ -3,21 +3,37 @@
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
+from absl import flags, logging
 from bitsandbytes.optim.adamw import AdamW8bit
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import AutoTokenizer
 
-from src.configs import FsdpConfig, LoraConfig, TrainConfig
-from src.model_utils import (
+from src.utils.general_utils import clear_gpu_cache
+from src.utils.model_utils import (
+    decoder_only_log_of_labels,
     get_lora_model_from_base_model,
     get_submodule_by_pattern,
-    llama_log_of_labels,
     lm_logits,
     load_model,
     log_of_labels,
+    print_model_size,
     shard_model,
 )
-from src.utils.train_utils import clear_gpu_cache, print_model_size
+
+FLAGS = flags.FLAGS
+flags.DEFINE_string(
+    "model_path", "/model-weights/gemma-2-9b-it", "/model-weights/Meta-Llama-3-8B-Instruct | /model-weights/gemma-2-9b-it"
+)
+flags.DEFINE_string("llm_name", "gemma2", "gemma2 | llama3")
+flags.DEFINE_integer("t_0", 10, "number of epochs before resetting the learning rate with scheduler.")
+flags.DEFINE_float("top_p", 0.9, "top_p value in nucleus sampling.", upper_bound=1.0, lower_bound=0.0)
+flags.DEFINE_float("temperature", 0.01, "temperature value used in the softmax function.", lower_bound=0.0)
+flags.DEFINE_integer("input_max_length", 1024, "max number of tokens for the input context.")
+flags.DEFINE_integer("output_max_length", 256, "max number of tokens for the output context.")
+
+flags.DEFINE_float("lr", 5e-5, "the initial learning rate.")
+flags.DEFINE_float("lr_min", 1e-5, "the minimum learning rate for scheduler.")
+flags.DEFINE_float("weight_decay", 0.001, "the weight decay for adam optimizer.")
 
 # Make sure we have some tokens defined for the LM, if not defined in the model.
 # Specific for Llama3
@@ -31,20 +47,12 @@ class LLM(torch.nn.Module):
 
     def __init__(
         self,
-        llm_name: str,
-        train_config: TrainConfig,
-        fsdp_config: FsdpConfig,
-        lora_config: LoraConfig,
         extra_tokens: Optional[Dict[str, str]] = None,
         local_rank: int = 0,
         rank: int = 0,
     ) -> None:
         super().__init__()
 
-        self.llm_name = llm_name
-        self.train_config = train_config
-        self.fsdp_config = fsdp_config
-        self.lora_config = lora_config
         self.rank = rank
         self.local_rank = local_rank
         self.terminators: List[int | List[int]] = []
@@ -57,10 +65,7 @@ class LLM(torch.nn.Module):
         # Load the pre-trained model and setup its configuration
 
         model = load_model(
-            train_config.model_name,
-            attn_implementation=train_config.attn_implementation,
-            use_mp=fsdp_config.mixed_precision,
-            low_cpu_mem_usage=train_config.low_cpu_mem_usage,
+            FLAGS.model_path,
             local_rank=self.local_rank,
         )
 
@@ -68,7 +73,7 @@ class LLM(torch.nn.Module):
         model.loss_func = loss_func
 
         # Load the tokenizer and add special tokens
-        self.tokenizer = AutoTokenizer.from_pretrained(train_config.model_name, padding_side="left")
+        self.tokenizer = AutoTokenizer.from_pretrained(FLAGS.model_path, padding_side="left")
 
         if extra_tokens is not None:
             self.tokenizer.add_special_tokens(extra_tokens)
@@ -76,7 +81,7 @@ class LLM(torch.nn.Module):
         # If there is a mismatch between tokenizer vocab size and embedding matrix,
         # throw a warning and then expand the embedding matrix
         if len(self.tokenizer) > model.get_input_embeddings().weight.shape[0]:
-            print("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
+            logging.info("WARNING: Resizing the embedding matrix to match the tokenizer vocab size.")
             if torch.cuda.is_available():
                 # extend embeddings to a multiple so we use Tensor cores
                 multiple = 64 if "A100" in torch.cuda.get_device_name() else 8
@@ -91,34 +96,26 @@ class LLM(torch.nn.Module):
                 model.config.__setattr__(f"{extra_token_key}_id", extra_token_id)
                 model.generation_config.__setattr__(f"{extra_token_key}_id", extra_token_id)
 
-        print_model_size(model, train_config, self.rank)
+        print_model_size(model, FLAGS.model_path, self.rank)
 
-        if train_config.use_peft:
+        if FLAGS.use_peft:
+            self.is_peft_adapter_restored = False
             # Load the pre-trained peft model checkpoint and setup its configuration
-            if train_config.from_peft_checkpoint:
-                model = get_lora_model_from_base_model(model, lora_config, train_config.from_peft_checkpoint)
-                self.peft_config = model.peft_config
-            # Generate the peft config and start fine-tuning from original model
-            else:
-                model = get_lora_model_from_base_model(model, lora_config)
-                self.peft_config = model.peft_config
+            model = get_lora_model_from_base_model(model)
+            self.peft_config = model.peft_config
+            self.is_peft_adapter_restored = model.is_peft_adapter_restored
 
         decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
         assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
         model = shard_model(
             model,
             decoder_layer_module,
-            fsdp_config.mixed_precision,
-            fsdp_config.activation_checkpointing,
-            fsdp_config.sharding_strategy,
             self.local_rank,
-            train_config.low_cpu_mem_usage,
-            train_config.use_peft,
         )
         self.device = model.device
         self.model = model
-        self.optimizer = AdamW8bit(self.model.parameters(), lr=train_config.lr, weight_decay=train_config.weight_decay)
-        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=train_config.T_0, eta_min=train_config.eta_min)
+        self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
+        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=FLAGS.t_0, eta_min=FLAGS.lr_min)
 
     def prepare_text_for_inference(
         self, texts: List[str], row_ids: List[str], gold_answers: Optional[List[str]] = None
@@ -129,7 +126,7 @@ class LLM(torch.nn.Module):
             texts,
             truncation=True,
             padding=True,
-            max_length=self.train_config.lm_input_max_length,
+            max_length=FLAGS.input_max_length,
             add_special_tokens=False,
         )
         data = {
@@ -149,7 +146,7 @@ class LLM(torch.nn.Module):
             inputs_for_training,
             truncation=True,
             padding=True,
-            max_length=self.train_config.lm_input_max_length + self.train_config.lm_output_max_length,
+            max_length=FLAGS.input_max_length + FLAGS.output_max_length,
             add_special_tokens=False,
         )
 
@@ -205,7 +202,7 @@ class LLM(torch.nn.Module):
                 batch_size, seq_len
             ) < original_len_without_answer.unsqueeze(1)
             masked_labels = masked_labels.masked_fill(prompt_mask == 1, -100)
-            return llama_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.model.loss_func)
+            return decoder_only_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.model.loss_func)
 
     def generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
         """Using the llm, generate new text.
@@ -221,9 +218,9 @@ class LLM(torch.nn.Module):
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 do_sample=True,
-                top_p=self.train_config.lm_top_p,
-                temperature=self.train_config.temperature,
-                max_length=self.train_config.lm_input_max_length + self.train_config.lm_output_max_length,
+                top_p=FLAGS.top_p,
+                temperature=FLAGS.temperature,
+                max_length=FLAGS.input_max_length + FLAGS.output_max_length,
                 num_return_sequences=1,
                 output_logits=True,
                 return_dict_in_generate=True,
@@ -266,13 +263,10 @@ class Llama3QA(LLM):
 
     def __init__(
         self,
-        train_config: TrainConfig,
-        fsdp_config: FsdpConfig,
-        lora_config: LoraConfig,
         local_rank: int = 0,
         rank: int = 0,
     ) -> None:
-        super().__init__("llama3", train_config, fsdp_config, lora_config, _LLAMA3_EXTRA_TOKENS, local_rank, rank)
+        super().__init__(_LLAMA3_EXTRA_TOKENS, local_rank, rank)
 
         # Chat templates for llama3.
         self.instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
@@ -288,13 +282,10 @@ class Gemma2QA(LLM):
 
     def __init__(
         self,
-        train_config: TrainConfig,
-        fsdp_config: FsdpConfig,
-        lora_config: LoraConfig,
         local_rank: int = 0,
         rank: int = 0,
     ) -> None:
-        super().__init__("gemma2", train_config, fsdp_config, lora_config, None, local_rank, rank)
+        super().__init__(None, local_rank, rank)
 
         # Chat templates for gemma2.
         self.instruction_template = "<bos><start_of_turn>user\n{instruction} <end_of_turn>"
