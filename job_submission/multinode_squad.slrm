@@ -1,17 +1,19 @@
 #!/bin/bash
-#SBATCH --job-name=llama3-multigpu
-#SBATCH --nodes=4
+#SBATCH --job-name=llm-multigpu
+#SBATCH --nodes=1
 #SBATCH --mem=0
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH --gres=gpu:a40:4
-#SBATCH --output=llama3.%j.out
-#SBATCH --error=llama3.%j.err
+#SBATCH --output=llm.%j.out
+#SBATCH --error=llm.%j.err
 #SBATCH --partition=a40
 #SBATCH --qos=m3
 #SBATCH --open-mode=append
 #SBATCH --wait-all-nodes=1
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
+
+CONFIG_FILE=$1
 
 date;hostname;pwd
 
@@ -40,10 +42,10 @@ srun -p $SLURM_JOB_PARTITION \
     -N $SLURM_JOB_NUM_NODES \
     --mem=0 \
     --gres=gpu:$SLURM_JOB_PARTITION:$SLURM_GPUS_ON_NODE \
-    bash -c 'torchrun \
+    bash -c "torchrun \
     --nproc-per-node=$SLURM_GPUS_ON_NODE \
     --nnodes=$SLURM_JOB_NUM_NODES \
     --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
     --rdzv-id $RDVZ_ID \
     --rdzv-backend c10d \
-    src/squadv2_finetuning.py'
+    src/squadv2_finetuning.py --flagfile $CONFIG_FILE"

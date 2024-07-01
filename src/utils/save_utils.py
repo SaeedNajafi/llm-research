@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import peft
 import torch
@@ -18,8 +18,6 @@ from torch.distributed.fsdp import ShardingStrategy, StateDictType  # general mo
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
-
-from src.llm import LLM
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("checkpoint_folder", "./checkpoints/gemma2-1024-13", "a path for checkpoint.")
@@ -334,7 +332,7 @@ def _should_save(rank: int, strategy: ShardingStrategy) -> bool:
     return True
 
 
-def save_checkpoint(model: LLM, step: int, epoch: int) -> None:
+def save_checkpoint(model: Any, step: int, epoch: int) -> None:
     """Save all states.
 
     Args:
@@ -378,7 +376,7 @@ def save_checkpoint(model: LLM, step: int, epoch: int) -> None:
     dist.barrier()
 
 
-def load_checkpoint(model: LLM, checkpoint_dir: str) -> Tuple[int, int]:
+def load_checkpoint(model: Any, checkpoint_dir: str) -> Tuple[int, int]:
     """Load all states.
 
     Args:
@@ -410,7 +408,7 @@ def load_checkpoint(model: LLM, checkpoint_dir: str) -> Tuple[int, int]:
     return step, epoch
 
 
-def find_checkpoint(model: LLM) -> Tuple[int, int]:
+def find_checkpoint(model: Any) -> Tuple[int, int]:
     """Find and load checkpoint if it exists.
 
     Args:
