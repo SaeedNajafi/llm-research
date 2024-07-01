@@ -20,9 +20,11 @@ from src.utils.train_utils import evaluation, setup, setup_environ_flags, train
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("mode", "train", "train | inference")
-flags.DEFINE_float("seed", 42, "random seed.")
+flags.DEFINE_integer("seed", 42, "random seed.")
 flags.DEFINE_string("project_name", "llm_research", "name for these runs.")
 flags.DEFINE_string("experiment_type", "normal_no_icl", "normal_no_icl | normal_icl | explanation_icl | explanation_no_icl")
+flags.DEFINE_integer("train_batch_size", 8, "train batch size.")
+flags.DEFINE_integer("eval_batch_size", 8, "eval batch size.")
 
 
 def setup_wandb() -> Any:

@@ -99,7 +99,6 @@ class LLM(torch.nn.Module):
         print_model_size(model, FLAGS.model_path, self.rank)
 
         if FLAGS.use_peft:
-            self.is_peft_adapter_restored = False
             # Load the pre-trained peft model checkpoint and setup its configuration
             model = get_lora_model_from_base_model(model)
             self.peft_config = model.peft_config
@@ -224,7 +223,7 @@ class LLM(torch.nn.Module):
                 num_return_sequences=1,
                 output_logits=True,
                 return_dict_in_generate=True,
-                use_cache=True,
+                use_cache=False,
                 renormalize_logits=True,
                 eos_token_id=self.terminators,
                 pad_token_id=self.tokenizer.pad_token_id,

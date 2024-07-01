@@ -15,7 +15,6 @@ from absl import flags, logging
 from accelerate.utils import is_ccl_available
 from tqdm import tqdm
 
-from src.llm import LLM
 from src.utils.memory_utils import MemoryTrace
 from src.utils.save_utils import find_checkpoint, save_checkpoint, save_to_json
 
@@ -373,7 +372,7 @@ def train(
 
 
 def evaluation(
-    model: LLM,
+    model: Any,
     eval_type: str,
     eval_dataloader: torch.utils.data.DataLoader,
     prediction_file_name: str,

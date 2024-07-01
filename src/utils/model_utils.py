@@ -56,7 +56,6 @@ def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
     """
     # See github.com/pytorch/pytorch/pull/102212
     base_model.load_state_dict(base_model.state_dict(), assign=True)
-
     if FLAGS.path_to_peft_adapter_to_restore != "":
         checkpoint_path = os.path.join(FLAGS.path_to_peft_adapter_to_restore, "checkpoints")
         peft_adapter_path = os.path.join(checkpoint_path, get_latest_checkpoint_dir(checkpoint_path))
@@ -66,7 +65,7 @@ def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
             is_trainable=True,
         )
         logging.info(f"Restored peft_adapter from {peft_adapter_path}.")
-        base_model.is_peft_adapter_restored = True
+        lora_model.is_peft_adapter_restored = True
 
     else:
         lora_config = LoraConfig(
@@ -80,6 +79,7 @@ def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
             target_modules=FLAGS.target_modules,
         )
         lora_model = get_peft_model(base_model, lora_config)
+        lora_model.is_peft_adapter_restored = False
 
     lora_model = lora_model.bfloat16()
     assert isinstance(lora_model, PeftModel)
