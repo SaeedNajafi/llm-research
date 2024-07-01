@@ -2,9 +2,9 @@
 #SBATCH --job-name=llama3-qa-inference
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-gpu=4
+#SBATCH --cpus-per-gpu=24
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:4
 #SBATCH --output=llama3-qa-inference-squad.%j.out
 #SBATCH --error=llama3-qa-inference-squad.%j.err
 #SBATCH --partition=a40

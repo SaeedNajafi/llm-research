@@ -223,7 +223,7 @@ class LLM(torch.nn.Module):
                 num_return_sequences=1,
                 output_logits=True,
                 return_dict_in_generate=True,
-                use_cache=False,
+                use_cache=True,
                 renormalize_logits=True,
                 eos_token_id=self.terminators,
                 pad_token_id=self.tokenizer.pad_token_id,
