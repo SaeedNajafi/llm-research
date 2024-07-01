@@ -1,8 +1,8 @@
 --dev_file=./data/1024-shot-datasets/squad/1024-13-train.tsv
 --test_file=./data/1024-shot-datasets/squad/original_validation.tsv
 --train_file=./data/1024-shot-datasets/squad/1024-13-dev.tsv
---checkpoint_folder=/scratch/ssd004/scratch/snajafi/checkpoints/lemma3-1024-13
---prediction_file=/scratch/ssd004/scratch/snajafi/checkpoints/lemma3-1024-13/prediction_squadv2.csv
+--checkpoint_folder=/scratch/ssd004/scratch/snajafi/checkpoints/llama3-1024-13
+--prediction_file=/scratch/ssd004/scratch/snajafi/checkpoints/llama3-1024-13/prediction_squadv2.csv
 --r=512
 --lora_alpha=512
 --lora_dropout=0.3
