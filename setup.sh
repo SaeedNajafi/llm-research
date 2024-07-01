@@ -59,6 +59,7 @@ function install_package () {
 		pip3 install -U sentence-transformers
 		pip3 install git+https://github.com/huggingface/transformers
 		export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
+		pip3 install llm2vec fire wandb bitsandbytes
 
 	elif [ "$OS" = "colab" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext

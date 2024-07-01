@@ -3,15 +3,15 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-gpu=4
-#SBATCH --mem=16G
-#SBATCH --gres=gpu:1
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:2
 #SBATCH --output=llama3-qa-inference-squad.%j.out
 #SBATCH --error=llama3-qa-inference-squad.%j.err
 #SBATCH --partition=a40
-#SBATCH --qos=normal
+#SBATCH --qos=m2
 #SBATCH --open-mode=append
 #SBATCH --wait-all-nodes=1
-#SBATCH --time=16:00:00
+#SBATCH --time=04:00:00
 
 OUTPUT_FILE=$1
 EXP_TYPE=$2
@@ -28,4 +28,11 @@ export XDG_RUNTIME_DIR=""
 python3 src/qa_llama3_squad.py \
     --output_file=${OUTPUT_FILE} \
     --experiment_type=${EXP_TYPE} \
-    --run_type=${RUN_TYPE}
+    --run_type=${RUN_TYPE} \
+    --metric_device="cuda:1" \
+    --metric_type="llm2vec" \
+    --model_path="/scratch/ssd004/scratch/snajafi/checkpoints/llama3-512-512-rank-drop-0.2-temp-0.01-dora" \
+    --model_id="/model-weights/Meta-Llama-3-8B-Instruct" \
+    --train_file_name="./notebooks/128-shot-datasets/squad/128-13-train.tsv" \
+    --dev_file_name="./notebooks/128-shot-datasets/squad/128-13-dev.tsv" \
+    --test_file_name="./notebooks/128-shot-datasets/squad/128-13-dev.tsv"

@@ -1,0 +1,87 @@
+"potential_answer","prediction_score","row_id","gold_answer"
+"assistant
+
+<no_answer>
+
+The passage does not mention what is ranked second on the world's list of most visited sites. It only states that YouTube is the third most visited website in the world, as of June 2015, according to third-party web analytics providers Alexa and SimilarWeb.","-0.09469691","1","<no_answer>"
+"assistant
+
+The shortest continuous text span from the passage that serves as an answer to the given question is:
+
+""...our experience of time, at the macroscopic level, is not time-reversal invariant.""
+
+This passage indicates that our experience of time is not time-reversal invariant, meaning that it does not follow the same rules as physical laws, which are time-reversal invariant.","-0.18981695","2","<no_answer>"
+"assistant
+
+The final answer is: detritivores.","-0.24578398","3","<no_answer>"
+"assistant
+
+The shortest continuous text span from the passage that serves as an answer to the given question is:
+
+""the 32nd and the 33rd America's Cup competitions""
+
+This answer is correct because it is a direct quote from the passage and provides the specific information requested in the question.","-0.15756135","4","the 32nd and the 33rd"
+"assistant
+
+The shortest continuous text span that serves as an answer to the given question is:
+
+""Addition of lead(II) oxide lowers melting point...""
+
+This sentence directly answers the question, stating that the addition of lead(II) oxide is responsible for lowering the melting point of the glass.","-0.13007742","5","lead(II) oxide"
+"assistant
+
+The shortest continuous text span that serves as an answer to the given question is:
+
+""interceptor aircraft""
+
+This answer is justified by the passage, which states that an interceptor aircraft is ""a type of fighter aircraft designed specifically to intercept and destroy enemy aircraft"".","-0.14569674","6","The interceptor aircraft"
+"assistant
+
+The shortest continuous text span that serves as an answer to the question is:
+
+""On the night of 21/22 September the United States, Saudi Arabia, Bahrain, the UAE, Jordan and Qatar started air attacks against ISIS in Syria.""
+
+This text span directly answers the question, stating the location of the airstrikes on September 21-22.","-0.08877711","7","Syria"
+"assistant
+
+The shortest continuous text span from the passage that serves as an answer to the given question is:
+
+""Proto-Slavic, the supposed ancestor language of all Slavic languages, is a descendant of common Proto-Indo-European, via a Balto-Slavic stage...""
+
+This passage explains that Proto-Slavic is a descendant of Proto-Indo-European, which makes it the ancestor language of all Slavic languages.","-0.12934174","8","<no_answer>"
+"assistant
+
+The correct answer is: The permanent dissolution of clouds.","-0.14727217","9","<no_answer>"
+"assistant
+
+The final answer is: Near East.","-0.14167902","10","Near East"
+"assistant
+
+The shortest continuous text span that serves as an answer to the question is:
+
+""bright red shirts with white sleeves and white shorts""
+
+This answer is justified by the passage, which states: ""For much of Arsenal's history, their home colours have been bright red shirts with white sleeves and white shorts...""","-0.0963216","11","bright red"
+"assistant
+
+The shortest continuous text span from the passage that serves as an answer to the given question is:
+
+""The First Sino-Japanese War of 1895 was a military humiliation.""
+
+This text span indicates that the First Sino-Japanese War took place in 1895.","-0.08926934","12","1895"
+"assistant
+
+According to the passage, madaris are similar to western colleges in the following way:
+
+""...where people take evening classes and reside in dormitories.""
+
+This sentence indicates that both madaris and western colleges offer evening classes and provide residential facilities for students.","-0.25427687","13","people take evening classes and reside in dormitories"
+"assistant
+
+Americans with Sub-Saharan African ancestry for historical reasons: slavery, partus sequitur ventrem, one-eighth law, the one-drop rule of 20th-century legislation, have frequently been classified as black (historically) or African American, even if they have significant European American or Native American ancestry.","-0.049547248","14","Americans with Sub-Saharan African ancestry"
+"assistant
+
+Diamonds and oil.","-0.14667147","15","diamonds and oil"
+"assistant
+
+According to the passage, the controversy surrounds the possibility of evidence of microbial life on Mars, specifically with the ALH84001 meteorite discovered by ANSMET.","-0.21077344","16","<no_answer>"
