@@ -10,7 +10,7 @@
 --use_peft
 --low_cpu_mem_usage
 --use_mp
---attn_implementation=eager
+--attn_implementation=flash_attention_2
 --use_activation_checkpointing
 --sharding_strategy=NO_SHARD
 --use_profiler
@@ -37,5 +37,5 @@
 --seed=13
 --project_name=llm_research
 --experiment_type=normal_no_icl
---train_batch_size=8
---eval_batch_size=8
+--train_batch_size=4
+--eval_batch_size=4

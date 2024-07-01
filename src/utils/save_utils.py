@@ -431,6 +431,7 @@ def find_checkpoint(model: Any) -> Tuple[int, int]:
         logging.info(f"Checkpoint found at {full_ckpt_dir}.")
         checkpointed_step, checkpointed_epoch = load_checkpoint(model, full_ckpt_dir)
     else:
+        print("I am here.")
         checkpointed_epoch = 0
         checkpointed_step = 0
     return checkpointed_step, checkpointed_epoch
