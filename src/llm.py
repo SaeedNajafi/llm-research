@@ -6,7 +6,6 @@ import torch
 from absl import flags, logging
 from bitsandbytes.optim.adamw import AdamW8bit
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from transformers import AutoTokenizer
 
 from src.utils.general_utils import clear_gpu_cache
 from src.utils.model_utils import (
@@ -19,6 +18,7 @@ from src.utils.model_utils import (
     print_model_size,
     shard_model,
 )
+from transformers import AutoTokenizer
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -106,11 +106,13 @@ class LLM(torch.nn.Module):
 
         decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
         assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
+
         model = shard_model(
             model,
             decoder_layer_module,
             self.local_rank,
         )
+
         self.device = model.device
         self.model = model
         self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
@@ -223,7 +225,7 @@ class LLM(torch.nn.Module):
                 num_return_sequences=1,
                 output_logits=True,
                 return_dict_in_generate=True,
-                use_cache=True,
+                use_cache=False,
                 renormalize_logits=True,
                 eos_token_id=self.terminators,
                 pad_token_id=self.tokenizer.pad_token_id,

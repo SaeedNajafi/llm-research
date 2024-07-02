@@ -13,7 +13,7 @@
 --attn_implementation=eager
 --use_activation_checkpointing
 --sharding_strategy=NO_SHARD
---use_profiler
+--use_profiler=false
 --max_train_step=0
 --max_eval_step=0
 --num_epochs=20
