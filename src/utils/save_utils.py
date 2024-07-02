@@ -358,6 +358,7 @@ def save_checkpoint(model: Any, step: int, epoch: int) -> None:
         # save flags.
         save_flags(FLAGS.checkpoint_folder)
 
+    '''
     # If peft is enabled, save only the peft adapters
     # and adapter optimizer state, but not base LLM weights.
     save_model_and_optimizer(
@@ -367,6 +368,7 @@ def save_checkpoint(model: Any, step: int, epoch: int) -> None:
         rank,
         include_model_state=not FLAGS.use_peft,
     )
+    '''
 
     if FLAGS.use_peft:
         save_peft_adapter(model.model, save_dir)

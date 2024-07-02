@@ -98,11 +98,13 @@ def train(
     results: Dict[str, Union[float, str]] = {}
     total_train_steps = 0
     max_steps_reached = False  # Flag to indicate max training steps reached
+    best_val_score = -float("inf")
 
     # Checkpoint check. Always call before training.
     # If no checkpoint, it returns 0.
     _, checkpointed_epoch = find_checkpoint(FLAGS.checkpoint_folder)
 
+    '''
     # Run an evaluation on the pre-loaded model.
     if FLAGS.run_validation:
         eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores = evaluation(
@@ -134,6 +136,7 @@ def train(
                         logging.info(f"best eval {score_name} with pre-trained model is {best_val_score}.")
             val_loss.append(float(-best_val_score))
             val_prep.append(float(eval_ppl))
+    '''
 
     # Start the training loop
     for epoch in range(checkpointed_epoch, FLAGS.num_epochs):
@@ -165,7 +168,7 @@ def train(
                     loss = loss / FLAGS.gradient_accumulation_steps
                     loss_value = loss.detach().float()
                     train_step_loss.append(loss_value.item())
-                    train_step_perplexity.append(torch.exp(loss_value))
+                    train_step_perplexity.append(float(torch.exp(loss_value)))
                     total_loss += loss_value
 
                     # regular backpropagation when fp16 is not used
@@ -439,7 +442,7 @@ def evaluation(
 
     float_val_socres: Dict[str, float] = {}
     for score_name, score_val in val_scores.items():
-        float_val_socres[score_name] = float(score_val)
+        float_val_socres[score_name] = float(score_val.item())
 
     if rank == 0:
         message = f"{eval_type}_ppl={eval_ppl} {eval_type}_epoch_loss={eval_epoch_loss}"
