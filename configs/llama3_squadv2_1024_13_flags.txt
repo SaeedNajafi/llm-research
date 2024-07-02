@@ -10,7 +10,7 @@
 --use_peft
 --low_cpu_mem_usage
 --use_mp
---attn_implementation=flash_attention_2
+--attn_implementation=eager
 --use_activation_checkpointing
 --sharding_strategy=NO_SHARD
 --use_profiler
