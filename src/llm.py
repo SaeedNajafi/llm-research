@@ -11,14 +11,13 @@ from src.utils.general_utils import clear_gpu_cache
 from src.utils.model_utils import (
     decoder_only_log_of_labels,
     get_lora_model_from_base_model,
-    get_submodule_by_pattern,
     lm_logits,
     load_model,
     log_of_labels,
     print_model_size,
-    shard_model,
 )
 from transformers import AutoTokenizer
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -104,15 +103,8 @@ class LLM(torch.nn.Module):
             self.peft_config = model.peft_config
             self.is_peft_adapter_restored = model.is_peft_adapter_restored
 
-        decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
-        assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
-
-        model = shard_model(
-            model,
-            decoder_layer_module,
-            self.local_rank,
-        )
-
+        model = model.to(torch.cuda.current_device())
+        model = DDP(model, device_ids=[model.device])
         self.device = model.device
         self.model = model
         self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
