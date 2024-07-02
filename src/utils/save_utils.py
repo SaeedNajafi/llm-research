@@ -123,6 +123,7 @@ def save_consolidated_model(
     model: nn.Module,
     save_dir: str,
     rank: int,
+    ddp: bool = True
 ) -> None:
     """Save the sharded model's parameters consolidated under a single file.
 
@@ -133,44 +134,60 @@ def save_consolidated_model(
         rank: The worker's rank.
     """
     os.makedirs(save_dir, exist_ok=True)
-    cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     save_path = os.path.join(save_dir, "model.bin")
-    with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
+    if ddp:
         state_dict = model.state_dict()
         if rank == 0:
             torch.save(state_dict, save_path)
+    else:
+        cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
+            state_dict = model.state_dict()
+            if rank == 0:
+                torch.save(state_dict, save_path)
 
 
 def get_peft_adapter_tensor_dict(
     model: peft.peft_model.PeftModel,
+    ddp: bool = True
 ) -> Dict[str, torch.Tensor] | None:
     """Return LoRA PEFT Adapter tensor state dict on rank 0.
 
     Returns None for all other ranks.
     """
-    with FSDP.state_dict_type(
-        model,
-        StateDictType.FULL_STATE_DICT,
-        FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
-    ):
+    if ddp:
         if dist.get_rank() == 0:
             return peft.utils.save_and_load.get_peft_model_state_dict(model)
-
         return None
+    else:
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
+        ):
+            if dist.get_rank() == 0:
+                return peft.utils.save_and_load.get_peft_model_state_dict(model)
+
+            return None
 
 
 def save_peft_adapter(
     model: peft.peft_model.PeftModel,
     output_path: str,
+    ddp: bool = True
 ) -> None:
     """Save peft adapter to filesystem in a FSDP environment."""
-    with FSDP.state_dict_type(
-        model,
-        StateDictType.FULL_STATE_DICT,
-        FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
-    ):
+    if ddp:
         if dist.get_rank() == 0:
             model.save_pretrained(output_path)
+    else:
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
+        ):
+            if dist.get_rank() == 0:
+                model.save_pretrained(output_path)
 
 
 def save_model_and_optimizer(
@@ -179,6 +196,7 @@ def save_model_and_optimizer(
     output_dir: str,
     rank: int,
     include_model_state: bool = True,
+    ddp: bool = True,
 ) -> None:
     """Save model and optimizer states.
 
@@ -193,37 +211,53 @@ def save_model_and_optimizer(
             but not base model weights.
     """
     os.makedirs(output_dir, exist_ok=True)
-    opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
-    with FSDP.state_dict_type(
-        model,
-        StateDictType.SHARDED_STATE_DICT,
-        optim_state_dict_config=opt_cfg,
-    ):
-        state_dict = model.state_dict()
-        opt_state = FSDP.sharded_optim_state_dict(model, optimizer)
-        full_state = {"optim_state": opt_state}
-        if include_model_state:
-            full_state["model_state"] = state_dict
-
-    writer = FileSystemWriter(output_dir, single_file_per_rank=True)
-    if _should_save(rank, model.sharding_strategy):
+    if ddp:
         if rank == 0:
-            logging.info(f"Saving states to {output_dir}.")
-        save(
-            state_dict=full_state,
-            storage_writer=writer,
-            process_group=model.process_group,
-            planner=DefaultSavePlanner(),
-        )
-        if rank == 0:
+            full_state = {"optim_state": optimizer.state_dict()}
+            if include_model_state:
+                full_state["model_state"] = model.state_dict()
+            writer = FileSystemWriter(output_dir, single_file_per_rank=True)
+            save(
+                state_dict=full_state,
+                storage_writer=writer,
+                process_group=model.process_group,
+                planner=DefaultSavePlanner(),
+            )
             logging.info(f"States saved to {output_dir}.")
+    else:
+        opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.SHARDED_STATE_DICT,
+            optim_state_dict_config=opt_cfg,
+        ):
+            state_dict = model.state_dict()
+            opt_state = FSDP.sharded_optim_state_dict(model, optimizer)
+            full_state = {"optim_state": opt_state}
+            if include_model_state:
+                full_state["model_state"] = state_dict
+
+        writer = FileSystemWriter(output_dir, single_file_per_rank=True)
+        if _should_save(rank, model.sharding_strategy):
+            if rank == 0:
+                logging.info(f"Saving states to {output_dir}.")
+            save(
+                state_dict=full_state,
+                storage_writer=writer,
+                process_group=model.process_group,
+                planner=DefaultSavePlanner(),
+            )
+            if rank == 0:
+                logging.info(f"States saved to {output_dir}.")
 
 
 def load_model_and_optimizer(
     optimizer: Optimizer,
     model: nn.Module,
+    rank: int,
     input_dir: str,
     optimizer_only: bool = False,
+    ddp: bool = True
 ) -> None:
     """Load optimizer states and model weight, if found.
 
@@ -238,29 +272,38 @@ def load_model_and_optimizer(
     """
     if dist.get_rank() == 0:
         logging.info(f"Loading states from {input_dir}.")
-
-    with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT):
-        model_state_dict = model.state_dict()
-        checkpoint = {"model_state": model_state_dict}
+    
+    if ddp:
+        map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+        state_dict = torch.load(input_dir, map_location=map_location)
         if not optimizer_only:
-            load(
-                state_dict=checkpoint,
-                storage_reader=FileSystemReader(input_dir),
-                planner=DefaultLoadPlanner(),
-            )
-            model.load_state_dict(checkpoint["model_state"])
+            model.load_state_dict(state_dict["model_state"])
+        optimizer.load_state_dict(state_dict["optim_state"])
 
-        optim_state = load_sharded_optimizer_state_dict(
-            model_state_dict=model.state_dict(),
-            optimizer_key="optim_state",
-            storage_reader=FileSystemReader(input_dir),
-        )
-        flattened_osd = FSDP.optim_state_dict_to_load(
-            model,
-            optimizer,
-            optim_state["optim_state"],
-        )
-        optimizer.load_state_dict(flattened_osd)
+    else:
+        with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT):
+            model_state_dict = model.state_dict()
+            checkpoint = {"model_state": model_state_dict}
+            if not optimizer_only:
+                load(
+                    state_dict=checkpoint,
+                    storage_reader=FileSystemReader(input_dir),
+                    planner=DefaultLoadPlanner(),
+                )
+                model.load_state_dict(checkpoint["model_state"])
+
+            optim_state = load_sharded_optimizer_state_dict(
+                model_state_dict=model.state_dict(),
+                optimizer_key="optim_state",
+                storage_reader=FileSystemReader(input_dir),
+            )
+            flattened_osd = FSDP.optim_state_dict_to_load(
+                model,
+                optimizer,
+                optim_state["optim_state"],
+            )
+            optimizer.load_state_dict(flattened_osd)
+    
     if dist.get_rank() == 0:
         logging.info(f"States loaded from {input_dir}.")
 
@@ -278,6 +321,7 @@ def save_scheduler(
         output_dir: The checkpointing directory.
         rank: The worker's rank.
     """
+
     if rank == 0:
         os.makedirs(output_dir, exist_ok=True)
         sched_name = "scheduler.bin"
@@ -292,6 +336,7 @@ def load_scheduler(
     scheduler: LRScheduler,
     input_dir: str,
     rank: int,
+    ddp: bool = True
 ) -> None:
     """Load scheduler states.
 
@@ -301,14 +346,25 @@ def load_scheduler(
         input_dir: The checkpointing directory.
         rank: The worker's rank.
     """
-    sched_name = "scheduler.bin"
-    input_scheduler_file = os.path.join(input_dir, sched_name)
-    if rank == 0:
-        logging.info(f"Loading scheduler state from {input_scheduler_file}.")
-    state_dict = torch.load(input_scheduler_file)
-    scheduler.load_state_dict(state_dict)
-    if rank == 0:
-        logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
+    if ddp:
+        sched_name = "scheduler.bin"
+        input_scheduler_file = os.path.join(input_dir, sched_name)
+        if rank == 0:
+            logging.info(f"Loading scheduler state from {input_scheduler_file}.")
+        map_location = {'cuda:%d' % 0: 'cuda:%d' % rank}
+        state_dict = torch.load(input_scheduler_file, map_location=map_location)
+        scheduler.load_state_dict(state_dict)
+        if rank == 0:
+            logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
+    else:
+        sched_name = "scheduler.bin"
+        input_scheduler_file = os.path.join(input_dir, sched_name)
+        if rank == 0:
+            logging.info(f"Loading scheduler state from {input_scheduler_file}.")
+        state_dict = torch.load(input_scheduler_file)
+        scheduler.load_state_dict(state_dict)
+        if rank == 0:
+            logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
 
 
 def _should_save(rank: int, strategy: ShardingStrategy) -> bool:
@@ -332,7 +388,7 @@ def _should_save(rank: int, strategy: ShardingStrategy) -> bool:
     return True
 
 
-def save_checkpoint(model: Any, step: int, epoch: int) -> None:
+def save_checkpoint(model: Any, step: int, epoch: int, ddp: bool = True) -> None:
     """Save all states.
 
     Args:
@@ -358,7 +414,6 @@ def save_checkpoint(model: Any, step: int, epoch: int) -> None:
         # save flags.
         save_flags(FLAGS.checkpoint_folder)
 
-    '''
     # If peft is enabled, save only the peft adapters
     # and adapter optimizer state, but not base LLM weights.
     save_model_and_optimizer(
@@ -367,18 +422,18 @@ def save_checkpoint(model: Any, step: int, epoch: int) -> None:
         save_dir,
         rank,
         include_model_state=not FLAGS.use_peft,
+        ddp=ddp
     )
-    '''
 
     if FLAGS.use_peft:
-        save_peft_adapter(model.model, save_dir)
+        save_peft_adapter(model.model, save_dir, ddp)
 
     save_scheduler(model.scheduler, save_dir, rank)
 
     dist.barrier()
 
 
-def load_checkpoint(model: Any, checkpoint_dir: str) -> Tuple[int, int]:
+def load_checkpoint(model: Any, checkpoint_dir: str, ddp: bool = True) -> Tuple[int, int]:
     """Load all states.
 
     Args:
@@ -404,13 +459,14 @@ def load_checkpoint(model: Any, checkpoint_dir: str) -> Tuple[int, int]:
         model.model,
         checkpoint_dir,
         optimizer_only=model.is_peft_adapter_restored,
+        ddp=ddp
     )
-    load_scheduler(model.scheduler, checkpoint_dir, rank)
+    load_scheduler(model.scheduler, checkpoint_dir, rank, ddp)
     dist.barrier()
     return step, epoch
 
 
-def find_checkpoint(model: Any) -> Tuple[int, int]:
+def find_checkpoint(model: Any, ddp: bool = True) -> Tuple[int, int]:
     """Find and load checkpoint if it exists.
 
     Args:
@@ -431,7 +487,7 @@ def find_checkpoint(model: Any) -> Tuple[int, int]:
         latest_ckpt_dir = get_latest_checkpoint_dir(main_ckpt_dir)
         full_ckpt_dir = os.path.join(main_ckpt_dir, latest_ckpt_dir)
         logging.info(f"Checkpoint found at {full_ckpt_dir}.")
-        checkpointed_step, checkpointed_epoch = load_checkpoint(model, full_ckpt_dir)
+        checkpointed_step, checkpointed_epoch = load_checkpoint(model, full_ckpt_dir, ddp)
     else:
         checkpointed_epoch = 0
         checkpointed_step = 0

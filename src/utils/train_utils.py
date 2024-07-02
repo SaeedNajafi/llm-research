@@ -31,6 +31,7 @@ flags.DEFINE_boolean("gradient_clipping", True, "use gradient clipping or not?")
 flags.DEFINE_float("gradient_clipping_threshold", 1.0, "threshold for gradient clipping.")
 flags.DEFINE_boolean("run_validation", True, "run validation and compute metrics.")
 flags.DEFINE_string("checkpoint_on_metric", "loss", "loss | squadv2_metrics_f1")
+flags.DEFINE_boolean("ddp", True, "is this a pure ddp run?")
 
 
 @contextlib.contextmanager
@@ -297,13 +298,13 @@ def train(
             checkpoint_start_time = time.perf_counter()
             if FLAGS.checkpoint_on_metric == "loss":
                 if -eval_epoch_loss > best_val_score:
-                    save_checkpoint(model, step + 1, epoch + 1)
+                    save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
 
             elif FLAGS.checkpoint_on_metric != "loss":
                 for score_name, score_val in eval_scores.items():
                     if score_name == FLAGS.checkpoint_on_metric:
                         if score_val > best_val_score:
-                            save_checkpoint(model, step + 1, epoch + 1)
+                            save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
 
             checkpoint_end_time = time.perf_counter() - checkpoint_start_time
             checkpoint_times.append(checkpoint_end_time)

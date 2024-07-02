@@ -3,14 +3,14 @@
 --train_file=./data/128-shot-datasets/squad/128-13-dev.tsv
 --checkpoint_folder=/scratch/ssd004/scratch/snajafi/checkpoints/llama3-128-13
 --prediction_file=/scratch/ssd004/scratch/snajafi/checkpoints/llama3-128-13/prediction_squadv2.csv
---r=512
---lora_alpha=512
+--r=64
+--lora_alpha=64
 --lora_dropout=0.3
 --target_modules=q_proj,v_proj,o_proj,k_proj
 --use_peft
 --low_cpu_mem_usage
 --use_mp
---attn_implementation=eager
+--attn_implementation=flash_attention_2
 --use_activation_checkpointing
 --sharding_strategy=NO_SHARD
 --use_profiler=false
@@ -37,5 +37,6 @@
 --seed=13
 --project_name=llm_research
 --experiment_type=normal_no_icl
---train_batch_size=2
---eval_batch_size=2
+--train_batch_size=4
+--eval_batch_size=4
+--ddp
