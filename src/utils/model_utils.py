@@ -115,18 +115,23 @@ def load_model(
             msg = "Use FA with bf16 (mixed precision)"
             raise ValueError(msg)
         model_args["attn_implementation"] = FLAGS.attn_implementation
-
-    if not FLAGS.low_cpu_mem_usage or local_rank == 0:
-        model = AutoModelForCausalLM.from_pretrained(
+    
+    model = AutoModelForCausalLM.from_pretrained(
             path,
             **model_args,
-        )
-    else:
-        with torch.device("meta"):
-            model = AutoModelForCausalLM.from_pretrained(
-                path,
-                **model_args,
-            )
+    )
+
+    # if not FLAGS.low_cpu_mem_usage or local_rank == 0:
+    #    model = AutoModelForCausalLM.from_pretrained(
+    #        path,
+    #        **model_args,
+    #    )
+    # else:
+    #    with torch.device("meta"):
+    #        model = AutoModelForCausalLM.from_pretrained(
+    #            path,
+    #            **model_args,
+    #        )
 
     return model
 

@@ -474,7 +474,7 @@ def setup() -> None:
 def setup_environ_flags(rank: int) -> None:
     """Set environment flags for debugging purposes."""
     os.environ["TORCH_SHOW_CPP_STACKTRACES"] = str(1)
-    os.environ["NCCL_ASYNC_ERROR_HANDLING"] = str(1)
+    os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = str(1)
     if rank == 0:
         logging.info("--> Running with torch dist debug set to detail")
 
