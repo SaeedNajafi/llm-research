@@ -3,12 +3,13 @@
 #SBATCH --nodes=1
 #SBATCH --mem=0
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=24
-#SBATCH --gres=gpu:a40:4
+#SBATCH --cpus-per-task=12
+#SBATCH --gres=gpu:a40:2
 #SBATCH --output=llm.%j.out
 #SBATCH --error=llm.%j.err
 #SBATCH --partition=a40
-#SBATCH --qos=normal
+#SBATCH --qos=fta_boot
+#SBATCH --account=fta_boot
 #SBATCH --open-mode=append
 #SBATCH --wait-all-nodes=1
 #SBATCH --time=02:00:00
