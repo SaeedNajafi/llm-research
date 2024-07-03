@@ -8,9 +8,9 @@ import os
 from typing import Any
 
 import torch
-import wandb
 from absl import app, flags
 
+import wandb
 from src.llm import Gemma2QA, Llama3QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.utils.data_utility import create_squadv2_dataloader
@@ -98,9 +98,8 @@ def main(argv: Any) -> None:
             qa_metric_squadv2_metrics,
         )
         if rank == 0:
-            if FLAGS.use_wandb:
-                for k, v in results.items():
-                    wandb_run.summary[k] = v
+            for k, v in results.items():
+                wandb_run.summary[k] = v
 
     elif FLAGS.mode == "inference":
         test_dataloader = create_squadv2_dataloader(
