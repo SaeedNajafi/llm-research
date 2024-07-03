@@ -5,7 +5,9 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import torch
 from absl import flags, logging
 from bitsandbytes.optim.adamw import AdamW8bit
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from transformers import AutoTokenizer
 
 from src.utils.general_utils import clear_gpu_cache
 from src.utils.model_utils import (
@@ -16,8 +18,6 @@ from src.utils.model_utils import (
     log_of_labels,
     print_model_size,
 )
-from transformers import AutoTokenizer
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -63,10 +63,7 @@ class LLM(torch.nn.Module):
 
         # Load the pre-trained model and setup its configuration
 
-        model = load_model(
-            FLAGS.model_path,
-            local_rank=self.local_rank,
-        )
+        model = load_model(FLAGS.model_path, local_rank=self.local_rank)
 
         # let fsdp handle this extra module to the devices.
         model.loss_func = loss_func
@@ -106,7 +103,7 @@ class LLM(torch.nn.Module):
         model = model.to(torch.cuda.current_device())
         model = DDP(model, device_ids=[model.device])
         self.device = model.device
-        self.model = model
+        self.model = model.module
         self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=FLAGS.t_0, eta_min=FLAGS.lr_min)
 
