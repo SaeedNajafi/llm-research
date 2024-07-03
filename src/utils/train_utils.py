@@ -104,40 +104,29 @@ def train(
     # Checkpoint check. Always call before training.
     # If no checkpoint, it returns 0.
     _, checkpointed_epoch = find_checkpoint(FLAGS.checkpoint_folder)
+    """# Run an evaluation on the pre-loaded model. if FLAGS.run_validation:
+    eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores
+    = evaluation( model, "eval", eval_dataloader, FLAGS.prediction_file, rank,
+    world_size, wandb_run,
 
-    '''
-    # Run an evaluation on the pre-loaded model.
-    if FLAGS.run_validation:
-        eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores = evaluation(
-            model,
-            "eval",
-            eval_dataloader,
-            FLAGS.prediction_file,
-            rank,
-            world_size,
-            wandb_run,
-            metric,
-        )
-        val_step_loss.extend(temp_val_loss)
-        val_step_perplexity.extend(temp_step_perplexity)
-        val_scores.append(eval_scores)
+    metric, ) val_step_loss.extend(temp_val_loss)
+    val_step_perplexity.extend(temp_step_perplexity)
+    val_scores.append(eval_scores)
 
-        if FLAGS.checkpoint_on_metric == "loss":
-            best_val_score = -eval_epoch_loss
-            if rank == 0:
-                logging.info(f"best eval loss with pre-trained model is {-best_val_score}.")
-            val_loss.append(float(-best_val_score))
-            val_prep.append(float(eval_ppl))
+    if FLAGS.checkpoint_on_metric == "loss":     best_val_score =
+    -eval_epoch_loss     if rank == 0:         logging.info(f"best eval
+    loss with pre-trained model is {-best_val_score}.")
+    val_loss.append(float(-best_val_score))
+    val_prep.append(float(eval_ppl))
 
-        elif FLAGS.checkpoint_on_metric != "loss":
-            for score_name, score_val in eval_scores.items():
-                if score_name == FLAGS.checkpoint_on_metric:
-                    best_val_score = score_val
-                    if rank == 0:
-                        logging.info(f"best eval {score_name} with pre-trained model is {best_val_score}.")
-            val_loss.append(float(-best_val_score))
-            val_prep.append(float(eval_ppl))
-    '''
+    elif FLAGS.checkpoint_on_metric != "loss":     for score_name,
+    score_val in eval_scores.items():         if score_name ==
+    FLAGS.checkpoint_on_metric:             best_val_score = score_val
+    if rank == 0:                 logging.info(f"best eval {score_name}
+    with pre-trained model is {best_val_score}.")
+    val_loss.append(float(-best_val_score))
+    val_prep.append(float(eval_ppl))
+    """
 
     # Start the training loop
     for epoch in range(checkpointed_epoch, FLAGS.num_epochs):
@@ -176,7 +165,7 @@ def train(
                     loss.backward()
                     if (step + 1) % FLAGS.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                         if FLAGS.gradient_clipping and FLAGS.gradient_clipping_threshold > 0.0:
-                            model.model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), FLAGS.gradient_clipping_threshold)
                         model.optimizer.step()
                         model.optimizer.zero_grad()
                         pbar.update(1)
@@ -215,13 +204,13 @@ def train(
                             checkpoint_start_time = time.perf_counter()
                             if FLAGS.checkpoint_on_metric == "loss":
                                 if -eval_epoch_loss > best_val_score:
-                                    save_checkpoint(model, step + 1, epoch + 1)
+                                    save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
 
                             elif FLAGS.checkpoint_on_metric != "loss":
                                 for score_name, score_val in eval_scores.items():
                                     if score_name == FLAGS.checkpoint_on_metric:
                                         if score_val > best_val_score:
-                                            save_checkpoint(model, step + 1, epoch + 1)
+                                            save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
 
                             checkpoint_end_time = time.perf_counter() - checkpoint_start_time
                             checkpoint_times.append(checkpoint_end_time)
@@ -443,7 +432,7 @@ def evaluation(
 
     float_val_socres: Dict[str, float] = {}
     for score_name, score_val in val_scores.items():
-        float_val_socres[score_name] = float(score_val.item())
+        float_val_socres[score_name] = float(score_val)
 
     if rank == 0:
         message = f"{eval_type}_ppl={eval_ppl} {eval_type}_epoch_loss={eval_epoch_loss}"

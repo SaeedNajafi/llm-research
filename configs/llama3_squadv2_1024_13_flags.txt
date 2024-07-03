@@ -3,8 +3,8 @@
 --train_file=./data/128-shot-datasets/squad/128-13-dev.tsv
 --checkpoint_folder=/scratch/ssd004/scratch/snajafi/checkpoints/llama3-128-13
 --prediction_file=/scratch/ssd004/scratch/snajafi/checkpoints/llama3-128-13/prediction_squadv2.csv
---r=64
---lora_alpha=64
+--r=16
+--lora_alpha=32
 --lora_dropout=0.3
 --target_modules=q_proj,v_proj,o_proj,k_proj
 --use_peft
