@@ -19,7 +19,7 @@ function install_python () {
 		module load python/3.10.12
 		module load cuda11.8+cudnn8.9.6
 		python3_command="python3"
-	elif [ "$OS" = "colab" ]; then
+	elif [ "$OS" = "lambda" ]; then
 		python3_command="python3"
 	fi
 }
