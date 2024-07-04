@@ -63,7 +63,7 @@ function install_package () {
 
 	elif [ "$OS" = "lambda" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
-		pip3 install --no-cache-dir tensorflow tensorboard
+		pip3 install --no-cache-dir tensorflow tensorboard tensorflow_hub tensorflow_text
 		pip3 install -e .'[dev]'
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
