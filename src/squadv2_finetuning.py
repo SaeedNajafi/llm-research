@@ -8,13 +8,14 @@ import os
 from typing import Any
 
 import torch
+import wandb
 from absl import app, flags
 
-import wandb
 from src.llm import Gemma2QA, Llama3QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.utils.data_utility import create_squadv2_dataloader
 from src.utils.general_utils import clear_gpu_cache, set_random_seed
+from src.utils.save_utils import find_checkpoint
 from src.utils.train_utils import evaluation, setup, setup_environ_flags, train
 
 FLAGS = flags.FLAGS
@@ -110,6 +111,8 @@ def main(argv: Any) -> None:
             world_size=world_size,
             rank=rank,
         )
+
+        _, _ = find_checkpoint(model)
 
         # Start the test process
         evaluation(

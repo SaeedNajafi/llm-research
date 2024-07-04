@@ -256,6 +256,7 @@ def load_model_and_optimizer(
 
     if ddp:
         map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
         if not optimizer_only:
             model.load_state_dict(state_dict["model_state"])
