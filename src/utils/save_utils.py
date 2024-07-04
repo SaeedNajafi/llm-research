@@ -57,7 +57,8 @@ def save_metadata(
 def save_flags(out_dir: str) -> None:
     """This function saves the absl flags into a file."""
     save_path = os.path.join(out_dir, "flagfile.txt")
-    os.remove(save_path)
+    if os.path.exists(save_path):
+        os.remove(save_path)
     FLAGS.append_flags_into_file(save_path)
     logging.info(f"training params are saved in {save_path}.")
 
