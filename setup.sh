@@ -61,14 +61,14 @@ function install_package () {
 		export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
 		pip3 install llm2vec fire wandb bitsandbytes
 
-	elif [ "$OS" = "colab" ]; then
+	elif [ "$OS" = "lambda" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
 		pip3 install --no-cache-dir tensorflow tensorboard
-		export CUDA_HOME=/usr
 		pip3 install -e .'[dev]'
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
+		pip3 install llm2vec wandb bitsandbytes sentence_transformers
 	fi
 
 

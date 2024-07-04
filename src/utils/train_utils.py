@@ -103,7 +103,7 @@ def train(
 
     # Checkpoint check. Always call before training.
     # If no checkpoint, it returns 0.
-    _, checkpointed_epoch = find_checkpoint(FLAGS.checkpoint_folder)
+    _, checkpointed_epoch = find_checkpoint(model)
     """# Run an evaluation on the pre-loaded model. if FLAGS.run_validation:
     eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores
     = evaluation( model, "eval", eval_dataloader, FLAGS.prediction_file, rank,

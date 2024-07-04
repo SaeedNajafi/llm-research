@@ -57,6 +57,8 @@ def save_metadata(
 def save_flags(out_dir: str) -> None:
     """This function saves the absl flags into a file."""
     save_path = os.path.join(out_dir, "flagfile.txt")
+    if os.path.exists(save_path):
+        os.remove(save_path)
     FLAGS.append_flags_into_file(save_path)
     logging.info(f"training params are saved in {save_path}.")
 
@@ -199,19 +201,15 @@ def save_model_and_optimizer(
             but not base model weights.
     """
     os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, "model_optim.bin")
     if ddp:
         if rank == 0:
             full_state = {"optim_state": optimizer.state_dict()}
             if include_model_state:
-                full_state["model_state"] = model.state_dict()
-            writer = FileSystemWriter(output_dir, single_file_per_rank=True)
-            save(
-                state_dict=full_state,
-                storage_writer=writer,
-                process_group=model.process_group,
-                planner=DefaultSavePlanner(),
-            )
-            logging.info(f"States saved to {output_dir}.")
+                full_state["model_state"] = model.model.state_dict()
+            torch.save(full_state, save_path)
+            logging.info(f"States saved to {save_path}.")
+
     else:
         opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
         with FSDP.state_dict_type(
@@ -258,6 +256,7 @@ def load_model_and_optimizer(
 
     if ddp:
         map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
         if not optimizer_only:
             model.load_state_dict(state_dict["model_state"])
@@ -394,7 +393,7 @@ def save_checkpoint(model: Any, step: int, epoch: int, ddp: bool = True) -> None
 
     # If peft is enabled, save only the peft adapters
     # and adapter optimizer state, but not base LLM weights.
-    save_model_and_optimizer(model.optimizer, model.model, save_dir, rank, include_model_state=not FLAGS.use_peft, ddp=ddp)
+    save_model_and_optimizer(model.optimizer, model, save_dir, rank, include_model_state=not FLAGS.use_peft, ddp=ddp)
 
     if FLAGS.use_peft:
         save_peft_adapter(model.model, save_dir, ddp)
