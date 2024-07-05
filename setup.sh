@@ -35,8 +35,8 @@ function install_env () {
 
 
 function install_package () {
-	pip3 install --no-cache-dir setuptools
-	pip3 install --no-cache-dir wheel
+	pip3 install --no-cache-dir --no-index setuptools
+	pip3 install --no-cache-dir --no-index wheel packaging
 	if [ "$OS" = "mac" ]; then
 		pip3 install --pre torch torchvision torchaudio torchtext \
 			--extra-index-url https://download.pytorch.org/whl/nightly/cpu
@@ -63,12 +63,13 @@ function install_package () {
 
 	elif [ "$OS" = "lambda" ]; then
 		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
-		pip3 install --no-cache-dir tensorflow tensorboard tensorflow_hub tensorflow_text
+		pip3 install --no-cache-dir tensorflow tensorboard tensorflow-hub tensorflow-text
 		pip3 install -e .'[dev]'
 		pip3 install --no-cache-dir packaging
 		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
 		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
 		pip3 install llm2vec wandb bitsandbytes sentence_transformers
+
 	fi
 
 

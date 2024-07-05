@@ -6,7 +6,7 @@ from setuptools import find_packages, setup
 
 HERE = os.path.abspath(os.path.dirname(__file__))
 README = open(os.path.join(HERE, "README.md")).read()
-VERSION = "0.2"
+VERSION = "0.3"
 
 # Publicly Available Packages (PyPi)
 INSTALL_REQUIRES = [
@@ -20,6 +20,17 @@ INSTALL_REQUIRES = [
     "nltk",
     "absl-py",
     "tqdm",
+    "llm2vec",
+    "wandb",
+    "bitsandbytes",
+    "sentence_transformers",
+    "transformers",
+    "datasets",
+    "ninja",
+    "packaging",
+    "wheel",
+    "setuptools",
+    "tensorrt",
 ]
 
 DEV_REQUIRES = [
@@ -42,7 +53,7 @@ setup(
     version=VERSION,
     description="Codes developed for research with LLMs.",
     long_description=README,
-    classifiers=["Programming Language :: Python :: 3.10"],
+    classifiers=["Programming Language :: Python :: 3.11"],
     keywords="NLP, Machine Learning",
     author="Saeed Najafi",
     author_email="snajafi@ualberta.ca",
