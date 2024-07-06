@@ -35,7 +35,6 @@ flags.DEFINE_float("lora_dropout", 0.3, "dropout in lora", upper_bound=0.5, lowe
 flags.DEFINE_list("target_modules", "q_proj,v_proj,o_proj,k_proj", "target modules in the lora.")
 flags.DEFINE_string("path_to_peft_adapter_to_restore", "", "path where the adapter is.")
 flags.DEFINE_boolean("use_peft", True, "whether to use peft for training or not?")
-flags.DEFINE_boolean("dora", False, "whether to enable dora?")
 
 
 # FSDP related arguments.
@@ -79,7 +78,6 @@ def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
             bias="none",
             init_lora_weights=True,
             target_modules=FLAGS.target_modules,
-            use_dora=FLAGS.dora,
         )
         lora_model = get_peft_model(base_model, lora_config)
         lora_model.is_peft_adapter_restored = False

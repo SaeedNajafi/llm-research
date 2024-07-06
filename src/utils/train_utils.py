@@ -458,7 +458,7 @@ def setup() -> None:
         # distributed training on xpus
         dist.init_process_group("ccl")
     else:
-        dist.init_process_group("nccl")
+        dist.init_process_group("nccl", timeout=datetime.timedelta(seconds=60000))
 
 
 def setup_environ_flags(rank: int) -> None:

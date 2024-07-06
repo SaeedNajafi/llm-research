@@ -2,15 +2,15 @@
 #SBATCH --job-name=llm-multigpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=32
-#SBATCH --gpus-per-node=4
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=6
+#SBATCH --gpus-per-node=1
+#SBATCH --mem=16G
 #SBATCH --output=llm.%j.out
 #SBATCH --error=llm.%j.err
 #SBATCH --account=rrg-afyshe
 #SBATCH --open-mode=append
 #SBATCH --wait-all-nodes=1
-#SBATCH --time=3-00:00:00
+#SBATCH --time=01:00:00
 
 CONFIG_FILE=$1
 
