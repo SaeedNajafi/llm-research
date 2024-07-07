@@ -40,6 +40,15 @@ _LLAMA3_EXTRA_TOKENS = {
     "pad_token": "<|reserved_special_token_0|>",
 }
 
+_GPT2_EXTRA_TOKENS = {
+    "pad_token": "<pad>",
+    "mask_token": "<mask>",
+    "bos_token": "<s>",
+    "eos_token": "</s>",
+    "unk_token": "<unk>",
+    "cls_token": "<cls>",
+}
+
 
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
@@ -235,7 +244,7 @@ class LLM(torch.nn.Module):
         """The main prediction loop."""
         answers, log_ps = self.generation_pass(batch)
         loss = -torch.mean(log_ps, dim=0).detach().float()
-        numpy_log_ps = log_ps.detach().cpu().numpy()
+        numpy_log_ps = log_ps.detach().float().cpu().numpy()
         for idx, answer in enumerate(answers):
             output_row = {
                 "potential_answer": answer,
@@ -284,3 +293,22 @@ class Gemma2QA(LLM):
 
         # required for gemma2.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<end_of_turn>")]
+
+
+class GPT2QA(LLM):
+    """Class to implement GPT2."""
+
+    def __init__(
+        self,
+        local_rank: int = 0,
+        rank: int = 0,
+    ) -> None:
+        super().__init__(_GPT2_EXTRA_TOKENS, local_rank, rank)
+
+        # Chat templates for gpt2.
+        self.instruction_template = "<s>\ninstruction: {instruction} </s>"
+        self.input_template = "<s>\nuser: {input} </s>"
+        self.output_template = "<s>\nmodel: {output} </s>"
+
+        # required for gemma2.
+        self.terminators = [self.tokenizer.eos_token_id]

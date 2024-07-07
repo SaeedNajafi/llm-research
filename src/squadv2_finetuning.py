@@ -11,7 +11,7 @@ import torch
 import wandb
 from absl import app, flags
 
-from src.llm import Gemma2QA, Llama3QA
+from src.llm import GPT2QA, Gemma2QA, Llama3QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.utils.data_utility import create_squadv2_dataloader
 from src.utils.general_utils import clear_gpu_cache, set_random_seed
@@ -64,6 +64,9 @@ def main(argv: Any) -> None:
 
     elif FLAGS.llm_name == "llama3":
         model = Llama3QA(local_rank, rank)
+
+    elif FLAGS.llm_name == "gpt2":
+        model = GPT2QA(local_rank, rank)
 
     if wandb_run:
         if FLAGS.use_peft:
