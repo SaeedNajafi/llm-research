@@ -32,6 +32,7 @@ flags.DEFINE_float("gradient_clipping_threshold", 1.0, "threshold for gradient c
 flags.DEFINE_boolean("run_validation", True, "run validation and compute metrics.")
 flags.DEFINE_string("checkpoint_on_metric", "loss", "loss | squadv2_metrics_f1")
 flags.DEFINE_boolean("ddp", True, "is this a pure ddp run?")
+flags.DEFINE_boolean("disable_scheduler", False, "Whether to disable scheduler or not.")
 
 
 @contextlib.contextmanager
@@ -104,29 +105,6 @@ def train(
     # Checkpoint check. Always call before training.
     # If no checkpoint, it returns 0.
     _, checkpointed_epoch = find_checkpoint(model)
-    """# Run an evaluation on the pre-loaded model. if FLAGS.run_validation:
-    eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores
-    = evaluation( model, "eval", eval_dataloader, FLAGS.prediction_file, rank,
-    world_size, wandb_run,
-
-    metric, ) val_step_loss.extend(temp_val_loss)
-    val_step_perplexity.extend(temp_step_perplexity)
-    val_scores.append(eval_scores)
-
-    if FLAGS.checkpoint_on_metric == "loss":     best_val_score =
-    -eval_epoch_loss     if rank == 0:         logging.info(f"best eval
-    loss with pre-trained model is {-best_val_score}.")
-    val_loss.append(float(-best_val_score))
-    val_prep.append(float(eval_ppl))
-
-    elif FLAGS.checkpoint_on_metric != "loss":     for score_name,
-    score_val in eval_scores.items():         if score_name ==
-    FLAGS.checkpoint_on_metric:             best_val_score = score_val
-    if rank == 0:                 logging.info(f"best eval {score_name}
-    with pre-trained model is {best_val_score}.")
-    val_loss.append(float(-best_val_score))
-    val_prep.append(float(eval_ppl))
-    """
 
     # Start the training loop
     for epoch in range(checkpointed_epoch, FLAGS.num_epochs):
@@ -268,7 +246,9 @@ def train(
             memtrace.print_stats()
 
         # Update the learning rate as needed.
-        model.scheduler.step()
+        if not FLAGS.disable_scheduler:
+            model.scheduler.step()
+
         if FLAGS.run_validation:
             eval_ppl, eval_epoch_loss, temp_val_loss, temp_step_perplexity, eval_scores = evaluation(
                 model,

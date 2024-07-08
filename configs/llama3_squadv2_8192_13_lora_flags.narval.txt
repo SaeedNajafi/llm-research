@@ -1,8 +1,8 @@
 --dev_file=/home/saeednjf/llm-research/data/8192-shot-datasets/squad/8192-13-dev.tsv
 --test_file=/home/saeednjf/llm-research/data/8192-shot-datasets/squad/original_validation.tsv
 --train_file=/home/saeednjf/llm-research/data/8192-shot-datasets/squad/8192-13-train.tsv
---checkpoint_folder=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/llama3/8192_13_lora_512_rank
---prediction_file=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/llama3/8192_13_lora_512_rank/prediction_squadv2.csv
+--checkpoint_folder=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/llama3/8192_13_lora_512_rank_no_schedule
+--prediction_file=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/llama3/8192_13_lora_512_rank_no_schedule/prediction_squadv2.csv
 --r=512
 --lora_alpha=512
 --lora_dropout=0.3
@@ -40,3 +40,4 @@
 --train_batch_size=3
 --eval_batch_size=16
 --ddp
+--disable_scheduler

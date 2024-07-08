@@ -30,6 +30,9 @@ FLAGS = flags.FLAGS
 
 # Lora related arguments.
 flags.DEFINE_integer("r", 512, "rank in the lora.")
+
+# It seems we are using rsLoRA with an alpha of 22.63 and rank 512 means,
+# lora_alpha = 22.63*(512**.5) = 512.
 flags.DEFINE_integer("lora_alpha", 512, "alpha hyper-parameter in lora.")
 flags.DEFINE_float("lora_dropout", 0.3, "dropout in lora", upper_bound=0.5, lower_bound=0.0)
 flags.DEFINE_list("target_modules", "q_proj,v_proj,o_proj,k_proj", "target modules in the lora.")
