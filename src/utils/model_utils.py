@@ -19,6 +19,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,
     checkpoint_wrapper,
 )
+from transformers import BitsAndBytesConfig
 from torch.distributed.fsdp import MixedPrecision, ShardingStrategy
 from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import _or_policy, lambda_auto_wrap_policy, transformer_auto_wrap_policy
@@ -42,6 +43,8 @@ flags.DEFINE_boolean("low_cpu_mem_usage", True, "helpful for fsdp?")
 flags.DEFINE_boolean("use_mp", True, "mixed precision training?")
 flags.DEFINE_string("attn_implementation", "flash_attention_2", "flash_attention_2 | eager")
 flags.DEFINE_boolean("use_activation_checkpointing", True, "whether to use activation checkpointing.")
+flags.DEFINE_boolean("enable_nf4", False, "whether to apply nf4 4-bit quantization.")
+
 flags.DEFINE_string("sharding_strategy", "NO_SHARD", "NO_SHARD | HYBRID_SHARD | SHARD_GRAD_OP")
 
 
@@ -116,6 +119,16 @@ def load_model(
             msg = "Use FA with bf16 (mixed precision)"
             raise ValueError(msg)
         model_args["attn_implementation"] = FLAGS.attn_implementation
+
+    if FLAGS.enable_nf4:
+        nf4_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_storage=torch.bfloat16,
+                    )
+        model_args["quantization_config"] = nf4_config
 
     model = AutoModelForCausalLM.from_pretrained(
         path,
