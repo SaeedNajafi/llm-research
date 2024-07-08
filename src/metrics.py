@@ -303,42 +303,51 @@ def main(argv: Any) -> None:
     del argv
 
     print("no_icl")
-    files = ["original_validation_normal_no_icl.zero_shot.squadv2_test_rank_0.csv",
-            "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_1.csv",
-            "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_2.csv",
-            "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_3.csv"]
+    files = [
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_0.csv",
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_1.csv",
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_2.csv",
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_3.csv",
+    ]
 
-    files_scores = {"squadv2_metrics_f1": 0.0,
-                    "squadv2_metrics_recall": 0.0,
-                    "squadv2_metrics_precision": 0.0,
-                    "squadv2_metrics_exact": 0.0,
-                    "sentence_similarity": 0.0}
+    files_scores = {
+        "squadv2_metrics_f1": 0.0,
+        "squadv2_metrics_recall": 0.0,
+        "squadv2_metrics_precision": 0.0,
+        "squadv2_metrics_exact": 0.0,
+        "sentence_similarity": 0.0,
+    }
     for file in files:
         scores = qa_metric(f"/scratch/ssd004/scratch/snajafi/train-models/13_inference/{file}")
         for key, value in scores.items():
             files_scores[key] += value
-        
+
     for key, value in files_scores.items():
         print(key, round(value / len(files), 4))
 
     print("icl")
-    files = ["original_validation_normal_icl.zero_shot.squadv2_test_rank_0.csv",
-            "original_validation_normal_icl.zero_shot.squadv2_test_rank_1.csv",
-            "original_validation_normal_icl.zero_shot.squadv2_test_rank_2.csv",
-            "original_validation_normal_icl.zero_shot.squadv2_test_rank_3.csv"]
+    files = [
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_0.csv",
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_1.csv",
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_2.csv",
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_3.csv",
+    ]
 
-    files_scores = {"squadv2_metrics_f1": 0.0,
-                    "squadv2_metrics_recall": 0.0,
-                    "squadv2_metrics_precision": 0.0,
-                    "squadv2_metrics_exact": 0.0,
-                    "sentence_similarity": 0.0}
+    files_scores = {
+        "squadv2_metrics_f1": 0.0,
+        "squadv2_metrics_recall": 0.0,
+        "squadv2_metrics_precision": 0.0,
+        "squadv2_metrics_exact": 0.0,
+        "sentence_similarity": 0.0,
+    }
     for file in files:
         scores = qa_metric(f"/scratch/ssd004/scratch/snajafi/train-models/13_inference/{file}")
         for key, value in scores.items():
             files_scores[key] += value
-        
+
     for key, value in files_scores.items():
         print(key, round(value / len(files), 4))
+
 
 if __name__ == "__main__":
     app.run(main)
