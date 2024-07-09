@@ -1,13 +1,13 @@
 --test_file=./data/8192-shot-datasets/squad/original_validation.tsv
---prediction_file=/scratch/ssd004/scratch/snajafi/train-models/13_inference/original_validation_normal_no_icl.zero_shot.70B.squadv2.csv
+--prediction_file=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/gemma2-27/original_validation_normal_no_icl.zero_shot.gemma2-27b.squadv2.csv
 --use_peft=false
 --low_cpu_mem_usage
 --use_mp
 --attn_implementation=eager
 --use_activation_checkpointing=false
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/model-weights/Meta-Llama-3-70B-Instruct
---llm_name=llama3
+--model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/gemma-2-27b-it
+--llm_name=gemma2
 --top_p=0.9
 --temperature=0.001
 --input_max_length=8192
@@ -16,6 +16,6 @@
 --seed=13
 --project_name=llm_research_squadv2
 --experiment_type=normal_no_icl
---eval_batch_size=2
+--eval_batch_size=4
 --ddp
 --enable_nf4

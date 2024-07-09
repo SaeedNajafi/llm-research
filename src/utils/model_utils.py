@@ -108,7 +108,7 @@ def load_model(path: str, local_rank: int, use_safetensors: bool = True, device:
         The model.
     """
     # load model
-    model_args: Dict[str, Any] = {"use_cache": False, "use_safetensors": use_safetensors, "device_map": device}
+    model_args: Dict[str, Any] = {"use_cache": True, "use_safetensors": use_safetensors, "device_map": device}
 
     if FLAGS.use_mp:
         model_args["torch_dtype"] = torch.bfloat16

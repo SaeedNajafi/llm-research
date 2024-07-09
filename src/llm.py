@@ -286,9 +286,9 @@ class Gemma2QA(LLM):
         super().__init__(None, local_rank, rank)
 
         # Chat templates for gemma2.
-        self.instruction_template = "<bos><start_of_turn>user\n{instruction} <end_of_turn>"
-        self.input_template = "<start_of_turn>user\n{input} <end_of_turn>"
-        self.output_template = "<start_of_turn>model\n{output} <end_of_turn>"
+        self.instruction_template = "<bos><start_of_turn>user\n{instruction}"
+        self.input_template = "\n{input}<end_of_turn>\n<start_of_turn>model"
+        self.output_template = "\n{output} <end_of_turn>"
 
         # required for gemma2.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<end_of_turn>")]
