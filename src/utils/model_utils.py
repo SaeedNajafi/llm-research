@@ -93,11 +93,7 @@ def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
     return lora_model
 
 
-def load_model(
-    path: str,
-    local_rank: int,
-    use_safetensors: bool = True,
-) -> PreTrainedModel:
+def load_model(path: str, local_rank: int, use_safetensors: bool = True, device: str = "cuda:0") -> PreTrainedModel:
     """Load the model.
 
     Args:
@@ -112,7 +108,7 @@ def load_model(
         The model.
     """
     # load model
-    model_args: Dict[str, Any] = {"use_cache": False, "use_safetensors": use_safetensors}
+    model_args: Dict[str, Any] = {"use_cache": False, "use_safetensors": use_safetensors, "device_map": device}
 
     if FLAGS.use_mp:
         model_args["torch_dtype"] = torch.bfloat16
