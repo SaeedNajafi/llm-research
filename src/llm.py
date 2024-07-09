@@ -72,7 +72,7 @@ class LLM(torch.nn.Module):
 
         # Load the pre-trained model and setup its configuration
 
-        model = load_model(FLAGS.model_path, local_rank=self.local_rank)
+        model = load_model(FLAGS.model_path, local_rank=self.local_rank, device=torch.cuda.current_device())
 
         # let fsdp handle this extra module to the devices.
         model.loss_func = loss_func
@@ -109,7 +109,6 @@ class LLM(torch.nn.Module):
             self.peft_config = model.peft_config
             self.is_peft_adapter_restored = model.is_peft_adapter_restored
 
-        model = model.to(torch.cuda.current_device())
         model = DDP(model, device_ids=[model.device])
         self.device = model.device
         self.model = model.module
