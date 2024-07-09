@@ -1,6 +1,6 @@
 from src.utils.general_utils import white_space_fix
 
-# Example context, question from squad.
+# Example context, question from squadv2 training split.
 contexts = [
     """Architecturally, the school has a Catholic character.\
         Atop the Main Building's gold dome is a golden statue of the Virgin Mary.\
