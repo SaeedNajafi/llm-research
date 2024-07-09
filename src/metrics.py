@@ -17,8 +17,8 @@ from transformers import AutoConfig, AutoModel, AutoTokenizer
 from src.utils.general_utils import clear_gpu_cache
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("metric_device", "cuda:1", "The device per node to calculate the metric.")
-flags.DEFINE_integer("metric_batch_size", 16, "batch size used for the metric model.")
+flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
+flags.DEFINE_integer("metric_batch_size", 32, "batch size used for the metric model.")
 flags.DEFINE_string("metric_type", "llm2vec", "llm2vec or sentence-t5 model?")
 
 
@@ -180,6 +180,9 @@ def postprocess_qa(txt: str) -> str:
             txt = txt.split("Answer: ")[1]
         except Exception:
             pass
+    txt = txt.replace("final answer11", "")
+    txt = txt.replace("final answer", "")
+    txt = txt.replace("from passage it can be inferred that", "")
     txt = txt.lower()
     txt = txt.replace("\n", " ")
     txt = txt.removesuffix("</s>")
@@ -193,6 +196,8 @@ def postprocess_qa(txt: str) -> str:
     txt = txt.removeprefix(",")
     txt = txt.strip()
     if ("<no_answer>" in txt) or ("no_answer" in txt) or ("noanswer" in txt):
+        txt = "This question is not answerable."
+    if ("passage does not mention" in txt) or ("there is no mention" in txt):
         txt = "This question is not answerable."
     return txt
 
@@ -296,7 +301,52 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
 def main(argv: Any) -> None:
     """Test the metrics."""
     del argv
-    print(qa_metric("./src/metrics_test_file.csv"))
+
+    print("no_icl")
+    files = [
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_0.csv",
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_1.csv",
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_2.csv",
+        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_3.csv",
+    ]
+
+    files_scores = {
+        "squadv2_metrics_f1": 0.0,
+        "squadv2_metrics_recall": 0.0,
+        "squadv2_metrics_precision": 0.0,
+        "squadv2_metrics_exact": 0.0,
+        "sentence_similarity": 0.0,
+    }
+    for file in files:
+        scores = qa_metric(f"/scratch/ssd004/scratch/snajafi/train-models/13_inference/{file}")
+        for key, value in scores.items():
+            files_scores[key] += value
+
+    for key, value in files_scores.items():
+        print(key, round(value / len(files), 4))
+
+    print("icl")
+    files = [
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_0.csv",
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_1.csv",
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_2.csv",
+        "original_validation_normal_icl.zero_shot.squadv2_test_rank_3.csv",
+    ]
+
+    files_scores = {
+        "squadv2_metrics_f1": 0.0,
+        "squadv2_metrics_recall": 0.0,
+        "squadv2_metrics_precision": 0.0,
+        "squadv2_metrics_exact": 0.0,
+        "sentence_similarity": 0.0,
+    }
+    for file in files:
+        scores = qa_metric(f"/scratch/ssd004/scratch/snajafi/train-models/13_inference/{file}")
+        for key, value in scores.items():
+            files_scores[key] += value
+
+    for key, value in files_scores.items():
+        print(key, round(value / len(files), 4))
 
 
 if __name__ == "__main__":
