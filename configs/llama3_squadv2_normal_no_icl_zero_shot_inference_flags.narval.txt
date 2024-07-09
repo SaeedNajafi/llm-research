@@ -1,12 +1,12 @@
 --test_file=/home/saeednjf/llm-research/data/8192-shot-datasets/squad/original_validation.tsv
---prediction_file=/home/saeednjf/scratch/models/squadv2/llama3/13_inference/original_validation_explanation_icl.zero_shot.squadv2.csv
+--prediction_file=/home/saeednjf/scratch/models/squadv2/llama3/13_inference/original_validation_normal_no_icl.zero_shot.70B.squadv2.csv
 --use_peft=false
 --low_cpu_mem_usage
 --use_mp
---attn_implementation=eager
+--attn_implementation=flash_attention_2
 --use_activation_checkpointing=false
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/home/saeednjf/projects/def-afyshe-ab/pre-trained-models/Meta-Llama-3-8B-Instruct
+--model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/Meta-Llama-3-70B-Instruct
 --llm_name=llama3
 --top_p=0.9
 --temperature=0.001
@@ -15,6 +15,7 @@
 --mode=inference
 --seed=13
 --project_name=llm_research_squadv2
---experiment_type=explanation_icl
+--experiment_type=normal_no_icl
 --eval_batch_size=2
 --ddp
+--enable_nf4
