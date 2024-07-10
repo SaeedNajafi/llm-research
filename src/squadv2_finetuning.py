@@ -128,6 +128,10 @@ def main(argv: Any) -> None:
             wandb_run,
             qa_metric_squadv2_metrics,
         )
+    elif FLAGS.mode == "deploy":
+        model.tokenizer.save_pretrained("/home/saeednjf/tmp-dir")
+        merged_model = model.model.merge_and_unload()
+        merged_model.save_pretrained("/home/saeednjf/tmp-dir", safe_serialization=False)
 
 
 if __name__ == "__main__":

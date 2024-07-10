@@ -2,7 +2,8 @@
 --test_file=/home/saeednjf/llm-research/data/8192-shot-datasets/squad/original_validation.tsv
 --train_file=/home/saeednjf/llm-research/data/8192-shot-datasets/squad/8192-13-train.tsv
 --checkpoint_folder=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/gemma2/8192_13_lora_rank_256
---prediction_file=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/gemma2/8192_13_lora_rank_256/prediction_squadv2.csv
+--path_to_peft_adapter_to_restore=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/gemma2/8192_13_lora_rank_256
+--prediction_file=/home/saeednjf/projects/def-afyshe-ab/saeednjf/checkpoints/squadv2/gemma2/8192_13_lora_rank_256/original_validation.gemma2-9b.normal_no_icl.prediction_squadv2.csv
 --r=256
 --lora_alpha=256
 --lora_dropout=0.3
@@ -33,7 +34,7 @@
 --lr=5e-5
 --lr_min=1e-5
 --weight_decay=0.01
---mode=train
+--mode=deploy
 --seed=13
 --project_name=llm_research_squadv2
 --experiment_type=normal_no_icl

@@ -196,3 +196,4 @@
 /data/8192-shot-datasets/squad/8192-87-dev.tsv filter=lfs diff=lfs merge=lfs -text
 /data/8192-shot-datasets/squad/8192-87-train.tsv filter=lfs diff=lfs merge=lfs -text
 /data/8192-shot-datasets/squad/original_validation.tsv filter=lfs diff=lfs merge=lfs -text
+/inference/poetry.lock filter=lfs diff=lfs merge=lfs -text
