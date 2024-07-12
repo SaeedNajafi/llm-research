@@ -8,14 +8,14 @@ import os
 from typing import Any
 
 import torch
-import wandb
 from absl import app, flags
 
-from src.llm import GPT2QA, Gemma2QA, Llama3QA
+import wandb
+from src.llm import Gemma2QA, Llama3QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.utils.data_utility import create_squadv2_dataloader
 from src.utils.general_utils import clear_gpu_cache, set_random_seed
-from src.utils.save_utils import find_checkpoint
+from src.utils.save_utils import deploy_model, find_checkpoint
 from src.utils.train_utils import evaluation, setup, setup_environ_flags, train
 
 FLAGS = flags.FLAGS
@@ -65,9 +65,6 @@ def main(argv: Any) -> None:
     elif FLAGS.llm_name == "llama3":
         model = Llama3QA(local_rank, rank)
 
-    elif FLAGS.llm_name == "gpt2":
-        model = GPT2QA(local_rank, rank)
-
     if wandb_run:
         if FLAGS.use_peft:
             wandb_run.config.update(model.peft_config)
@@ -101,9 +98,12 @@ def main(argv: Any) -> None:
             wandb_run,
             qa_metric_squadv2_metrics,
         )
+
         if rank == 0:
             for k, v in results.items():
                 wandb_run.summary[k] = v
+
+        deploy_model(model)
 
     elif FLAGS.mode == "inference":
         test_dataloader = create_squadv2_dataloader(
@@ -128,10 +128,6 @@ def main(argv: Any) -> None:
             wandb_run,
             qa_metric_squadv2_metrics,
         )
-    elif FLAGS.mode == "deploy":
-        model.tokenizer.save_pretrained("/home/saeednjf/tmp-dir")
-        merged_model = model.model.merge_and_unload()
-        merged_model.save_pretrained("/home/saeednjf/tmp-dir", safe_serialization=False)
 
 
 if __name__ == "__main__":

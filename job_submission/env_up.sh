@@ -1,25 +1,22 @@
 #!/bin/bash
 
-set -e
+module --force purge
 
-function narval_up () {
-    module --force purge
+eval "$(conda shell.bash hook)"
+conda activate llm-env
 
-    eval "$(conda shell.bash hook)"
-    conda activate llm-env
+export CUDA_HOME=$CONDA_PREFIX
+export NCCL_HOME=$CONDA_PREFIX
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
 
-    export CUDA_HOME=$CONDA_PREFIX
-    export NCCL_HOME=$CONDA_PREFIX
-    export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
-}
+if [ "$CLUSTER_NAME" = "vcluster" ]; then
+    export NCCL_IB_DISABLE=1  # Our cluster does not have InfiniBand. We need to disable usage using this flag.
+fi
 
-function vcluster_up () {
-    module load cuda11.8+cudnn8.9.6
-
-    source ${PWD}/llm-env/bin/activate
-
-    export PATH=${PWD}/llm-env/bin:$PATH
-    export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
-    export XDG_RUNTIME_DIR=""
-
-}
+export NCCL_DEBUG=WARN
+export NCCL_DEBUG_SUBSYS=WARN
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export TORCH_CPP_LOG_LEVEL=INFO
+export LOGLEVEL=INFO
+export PYTHONFAULTHANDLER=1
+export CUDA_LAUNCH_BLOCKING=1

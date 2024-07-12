@@ -137,3 +137,9 @@ launch.json
 
 #mac
 .DS_Store
+
+#related to slurm output and error files.
+*.err
+*.out
+wandb
+training_logs

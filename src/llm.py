@@ -40,15 +40,6 @@ _LLAMA3_EXTRA_TOKENS = {
     "pad_token": "<|reserved_special_token_0|>",
 }
 
-_GPT2_EXTRA_TOKENS = {
-    "pad_token": "<pad>",
-    "mask_token": "<mask>",
-    "bos_token": "<s>",
-    "eos_token": "</s>",
-    "unk_token": "<unk>",
-    "cls_token": "<cls>",
-}
-
 
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
@@ -292,22 +283,3 @@ class Gemma2QA(LLM):
 
         # required for gemma2.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<end_of_turn>")]
-
-
-class GPT2QA(LLM):
-    """Class to implement GPT2."""
-
-    def __init__(
-        self,
-        local_rank: int = 0,
-        rank: int = 0,
-    ) -> None:
-        super().__init__(_GPT2_EXTRA_TOKENS, local_rank, rank)
-
-        # Chat templates for gpt2.
-        self.instruction_template = "<s>\ninstruction: {instruction} </s>"
-        self.input_template = "<s>\nuser: {input} </s>"
-        self.output_template = "<s>\nmodel: {output} </s>"
-
-        # required for gemma2.
-        self.terminators = [self.tokenizer.eos_token_id]

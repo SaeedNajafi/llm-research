@@ -23,6 +23,16 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("checkpoint_folder", "./checkpoints/gemma2-1024-13", "a path for checkpoint.")
 
 
+def deploy_model(model: Any) -> None:
+    """Merge lora into base model and save tokenizer and model for deployment
+    with vllm."""
+    deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
+    os.makedirs(deploy_dir, exist_ok=True)
+    model.tokenizer.save_pretrained(deploy_dir)
+    merged_model = model.model.merge_and_unload()
+    merged_model.save_pretrained(deploy_dir, safe_serialization=False)
+
+
 def checkpoint_exists(output_dir: str) -> bool:
     """Check if a checkpoint exists.
 
