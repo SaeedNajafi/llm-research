@@ -16,18 +16,10 @@ CONFIG_FILE=$1
 
 date;hostname;pwd
 
-module --force purge
 
-source activate llm-env
 
-export CUDA_HOME=$CONDA_PREFIX
-
-export NCCL_HOME=$CONDA_PREFIX
-
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
 
 export NCCL_BLOCKING_WAIT=1  # Set this environment variable if you wish to use the NCCL backend for inter-GPU communication.
-
 export TORCH_NCCL_BLOCKING_WAIT=1
 
 export MASTER_ADDR="$(hostname --fqdn)"

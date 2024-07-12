@@ -2,79 +2,51 @@
 
 set -e
 
-for ARGUMENT in "$@"
-do
-	KEY=$(echo $ARGUMENT | cut -f1 -d=)
-	KEY_LENGTH=${#KEY}
-	VALUE="${ARGUMENT:$KEY_LENGTH+1}"
-	export "$KEY"="$VALUE"
-done
 
-function install_python () {
-	if [ "$OS" = "mac" ]; then
-		brew install python@3.10
-		brew install python-tk@3.10
-		python3_command="python3.10"
-	elif [ "$OS" = "vcluster" ]; then
-		module load python/3.10.12
-		module load cuda11.8+cudnn8.9.6
-		python3_command="python3"
-	elif [ "$OS" = "lambda" ]; then
-		python3_command="python3"
-	fi
-}
+ENV_NAME=$1
 
-ENV_NAME="llm"
+conda create -n ${ENV_NAME} python=3.11
 
-function install_env () {
-	${python3_command} -m venv $ENV_NAME-env
-	source $ENV_NAME-env/bin/activate
-	export PATH=${PWD}/$ENV_NAME-env/bin:$PATH
-	pip3 install --upgrade pip
-}
+eval "$(conda shell.bash hook)"
 
+conda activate ${ENV_NAME}
 
-function install_package () {
-	pip3 install --no-cache-dir --no-index setuptools
-	pip3 install --no-cache-dir --no-index wheel packaging
-	if [ "$OS" = "mac" ]; then
-		pip3 install --pre torch torchvision torchaudio torchtext \
-			--extra-index-url https://download.pytorch.org/whl/nightly/cpu
-		pip3 install tensorflow[and-cuda]
-		pip3 install --no-cache-dir tensorboard
-		pip3 install --no-cache-dir tensorflow-macos
-		pip3 install -e .'[dev]'
-		pip3 install -U sentence-transformers
-		pip3 install git+https://github.com/huggingface/transformers
+echo "Installing git."
+conda install -c anaconda git
 
-	elif [ "$OS" = "vcluster" ]; then
-		pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+echo "Installing git-lfs."
+conda install conda-forge::git-lfs
 
-		# compatible with python3.10 and cuda 11.8
-		pip3 install --no-cache-dir tensorflow==2.12.0
-		pip3 install --no-cache-dir tensorflow_hub==0.12.0 tensorflow_text==2.12.0
-		pip3 install -e .'[dev]'
-		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
-		MAX_JOBS=7 pip3 install --no-cache-dir flash-attn --no-build-isolation
-		pip3 install -U sentence-transformers
-		pip3 install git+https://github.com/huggingface/transformers
-		export TRITON_PTXAS_PATH=/pkgs/cuda-11.8/bin/ptxas
-		pip3 install llm2vec fire wandb bitsandbytes
+echo "Installing rust."
+conda install conda-forge::rust
 
-	elif [ "$OS" = "lambda" ]; then
-		pip3 install --no-cache-dir torch torchvision torchaudio torchtext
-		pip3 install --no-cache-dir tensorflow tensorboard tensorflow-hub tensorflow-text
-		pip3 install -e .'[dev]'
-		pip3 install --no-cache-dir packaging
-		pip3 uninstall -y ninja && pip3 install --no-cache-dir ninja
-		MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
-		pip3 install llm2vec wandb bitsandbytes sentence_transformers
+echo "Installing pytorch related modules."
+CONDA_OVERRIDE_CUDA="12.1" conda install pytorch torchvision torchtriton torchserve torchtext magma-cuda121 torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
 
-	fi
+echo "Installing tensorflow related modules."
+CONDA_OVERRIDE_CUDA="12.1" conda install tensorflow tensorflow-hub -c conda-forge
 
+echo "Installing cuda-nvcc."
+CONDA_OVERRIDE_CUDA="12.1" conda install cuda-nvcc -c nvidia
 
-}
+# Get rid of cluster python.
+module --force purge
 
-install_python
-install_env
-install_package
+echo "Upgrade pip."
+pip3 install --upgrade pip
+
+echo "Install the editable version of llm-research."
+pip3 install -e .[dev]
+
+export CUDA_HOME=$CONDA_PREFIX
+export NCCL_HOME=$CONDA_PREFIX
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
+
+echo "Install flash-attention and vllm-flash-attn and vllm-nccl-cu12."
+
+MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
+pip3 install vllm-flash-attn
+pip3 install vllm-nccl-cu12
+
+echo "Install flashinfer for vllm and gemma2 models."
+pip3 install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.3
