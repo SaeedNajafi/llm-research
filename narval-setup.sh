@@ -16,3 +16,5 @@ export CUDA_HOME=$CONDA_PREFIX
 export NCCL_HOME=$CONDA_PREFIX
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
 MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
+pip3 install vllm-flash-attn
+pip3 install vllm-nccl-cu11

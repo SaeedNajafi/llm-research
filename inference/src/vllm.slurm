@@ -1,56 +1,41 @@
 #!/bin/bash
-#SBATCH --cpus-per-task=16
+
+#SBATCH --cpus-per-task=24
 #SBATCH --mem=64G
+#SBATCH --ntasks-per-node=1
+#SBATCH --open-mode=append
+#SBATCH --wait-all-nodes=1
 
-# Load CUDA, change to the cuda version on your environment if different
-# module load cuda-12.3
-
-# Specific to ComputeCanada.
-
-module --force purge
-
-source activate llm-env
-
-export CUDA_HOME=$CONDA_PREFIX
-
-export NCCL_HOME=$CONDA_PREFIX
-
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
-
-# End of specific for ComputeCanada.
+date;hostname;pwd
 
 nvidia-smi
 
-source ${SRC_DIR}/find_port.sh
+module --force purge
+
+eval "$(conda shell.bash hook)"
+
+conda activate llm-env
+
+export CUDA_HOME=$CONDA_PREFIX
+export NCCL_HOME=$CONDA_PREFIX
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
+
+# source ${SRC_DIR}/src/find_port.sh
 
 # Write server url to file
 hostname=${SLURMD_NODENAME}
-vllm_port_number=$(find_available_port $hostname 8080 65535)
-
+echo $hostname
+export MASTER_ADDR=$(hostname)
+echo "r$SLURM_NODEID master: $MASTER_ADDR"
+#vllm_port_number=$(find_available_port $hostname 8080 65535)
+vllm_port_number=3456
 echo "Server address: http://${hostname}:${vllm_port_number}/v1"
 echo "http://${hostname}:${vllm_port_number}/v1" > ${VLLM_BASE_URL_FILENAME}
 
-# Activate vllm venv
-if [ "$VENV_BASE" = "singularity" ]; then
-    export SINGULARITY_IMAGE=/projects/aieng/public/vector-inference_0.2.0.sif
-    export VLLM_NCCL_SO_PATH=/vec-inf/nccl/libnccl.so.2.18.1
-    module load singularity-ce/3.8.2
-    singularity exec $SINGULARITY_IMAGE ray stop
-    singularity exec --nv --bind /model-weights:/model-weights $SINGULARITY_IMAGE \
-    python3.10 -m vllm.entrypoints.openai.api_server \
+VLLM_ATTENTION_BACKEND=FLASHINFER python3 -m vllm.entrypoints.openai.api_server \
     --model ${VLLM_MODEL_WEIGHTS} \
     --host "0.0.0.0" \
     --port ${vllm_port_number} \
     --tensor-parallel-size ${NUM_GPUS} \
     --dtype ${VLLM_DATA_TYPE} \
     --max-logprobs ${VLLM_MAX_LOGPROBS}
-else
-    # source ${VENV_BASE}/bin/activate
-    python3 -m vllm.entrypoints.openai.api_server \
-    --model ${VLLM_MODEL_WEIGHTS} \
-    --host "0.0.0.0" \
-    --port ${vllm_port_number} \
-    --tensor-parallel-size ${NUM_GPUS} \
-    --dtype ${VLLM_DATA_TYPE} \
-    --max-logprobs ${VLLM_MAX_LOGPROBS}
-fi

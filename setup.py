@@ -31,6 +31,11 @@ INSTALL_REQUIRES = [
     "wheel",
     "setuptools",
     "tensorrt",
+    "vllm",
+    "triton",
+    "ray",
+    "llvmlite"
+    
 ]
 
 DEV_REQUIRES = [
@@ -53,7 +58,7 @@ setup(
     version=VERSION,
     description="Codes developed for research with LLMs.",
     long_description=README,
-    classifiers=["Programming Language :: Python :: 3.11"],
+    classifiers=["Programming Language :: Python :: 3.10"],
     keywords="NLP, Machine Learning",
     author="Saeed Najafi",
     author_email="snajafi@ualberta.ca",

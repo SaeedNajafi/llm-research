@@ -3,8 +3,8 @@ import time
 import requests
 
 # Change the ENDPOINT and MODEL_PATH to match your setup
-ENDPOINT = "http://gpuXXX:XXXX/v1"
-MODEL_PATH = "Meta-Llama-3-70B"
+ENDPOINT = "http://ng31201:3456/v1"
+MODEL_PATH = "/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/gemma-2-27b-it"
 
 # Configuration
 API_KEY = "EMPTY"
@@ -72,7 +72,7 @@ PROMPTS = [
 
 
 def send_request(prompt):
-    data = {"model": f"/model-weights/{MODEL_PATH}", "prompt": prompt, "max_tokens": 100}
+    data = {"model": MODEL_PATH, "prompt": prompt, "max_tokens": 100}
     start_time = time.time()
     response = requests.post(f"{ENDPOINT}/completions", headers=HEADERS, json=data)
     duration = time.time() - start_time

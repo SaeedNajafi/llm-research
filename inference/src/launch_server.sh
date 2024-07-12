@@ -29,10 +29,10 @@ if [ -z "$model_family" ]; then
 fi
 # ================================= Set default environment variables ======================================
 export MODEL_FAMILY=$model_family
-export SRC_DIR="$(dirname "$0")"
+export SRC_DIR="$(pwd)"
 
 # Load the configuration file for the specified model family
-CONFIG_FILE="${SRC_DIR}/../models/${MODEL_FAMILY}/config.sh"
+CONFIG_FILE="$SRC_DIR/models/${MODEL_FAMILY}/config.sh"
 if [ ! -f "$CONFIG_FILE" ]; then
   echo "Configuration file not found: $CONFIG_FILE"
   exit 1
@@ -41,20 +41,23 @@ source "$CONFIG_FILE"
 
 # Model and entrypoint configuration. API Server URL (host, port) are set automatically based on the
 # SLURM job and are written to the file specified at VLLM_BASE_URL_FILENAME
-export MODEL_DIR="${SRC_DIR}/../models/${MODEL_FAMILY}"
+export MODEL_DIR="$SRC_DIR/models/${MODEL_FAMILY}"
 export VLLM_BASE_URL_FILENAME="${MODEL_DIR}/.vLLM_${MODEL_NAME}-${MODEL_VARIANT}_url"
 export VLLM_DATA_TYPE="auto"
 
 # Variables specific to your working environment, below are examples for the Vector cluster
-export VENV_BASE="singularity"
-export VLLM_MODEL_WEIGHTS="/model-weights/${MODEL_NAME}-${MODEL_VARIANT}"
-export LD_LIBRARY_PATH="/scratch/ssd001/pkgs/cudnn-11.7-v8.5.0.96/lib/:/scratch/ssd001/pkgs/cuda-11.7/targets/x86_64-linux/lib/"
+# export VENV_BASE="singularity"
+export VENV_BASE="llm-env"
+# export VLLM_MODEL_WEIGHTS="/model-weights/${MODEL_NAME}-${MODEL_VARIANT}"
+# export LD_LIBRARY_PATH="/scratch/ssd001/pkgs/cudnn-11.7-v8.5.0.96/lib/:/scratch/ssd001/pkgs/cuda-11.7/targets/x86_64-linux/lib/"
+
+export VLLM_MODEL_WEIGHTS="/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/${MODEL_NAME}-${MODEL_VARIANT}"
 
 # Slurm job configuration
 export JOB_NAME="vLLM/${MODEL_NAME}-${MODEL_VARIANT}"
-export JOB_PARTITION="a40"
-export QOS="m3"
-export TIME="04:00:00"
+# export JOB_PARTITION="a40"
+# export QOS="m3"
+export TIME="01:00:00"
 
 # VLM configuration
 if [ "$is_vlm" = true ]; then
@@ -130,7 +133,7 @@ fp16_partitions="t4v1 t4v2"
 
 # choose from 'auto', 'half', 'float16', 'bfloat16', 'float', 'float32'
 if [[ ${fp16_partitions} =~ ${JOB_PARTITION} ]]; then
-    export VLLM_DATA_TYPE="float16"
+    export VLLM_DATA_TYPE="bfloat16"
     echo "Data type set to due to non-Ampere GPUs used: ${VLLM_DATA_TYPE}"
 fi
 # ========================================= Launch Server ==========================================
@@ -154,12 +157,12 @@ if [ "$is_vlm" = true ]; then
     is_special="vlm_"
 fi
 
+
 sbatch --job-name ${JOB_NAME} \
-    --partition ${JOB_PARTITION} \
     --nodes ${NUM_NODES} \
-    --gres gpu:${NUM_GPUS} \
-    --qos ${QOS} \
+    --gpus-per-node=${NUM_GPUS} \
     --time ${TIME} \
+    --account=rrg-afyshe \
     --output ${MODEL_DIR}/vLLM-${MODEL_NAME}-${MODEL_VARIANT}.%j.out \
     --error ${MODEL_DIR}/vLLM-${MODEL_NAME}-${MODEL_VARIANT}.%j.err \
-    ${SRC_DIR}/${is_special}vllm.slurm
+    $SRC_DIR/src/${is_special}vllm.slurm

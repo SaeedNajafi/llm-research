@@ -2,4 +2,5 @@
 
 | Variant | Suggested resource allocation | Avg prompt throughput | Avg generation throughput |
 |:----------:|:----------:|:----------:|:----------:|
-| [`9b-it`](https://huggingface.co/google/gemma-2-9b-it) | 1x a100 (40G) | 0.0 tokens/s | 0.0 tokens/s |
+| [`9b-it`](https://huggingface.co/google/gemma-2-9b-it) | 2x a100 (40G each) | 391 tokens/s| 3490 tokens/s|
+| [`27b-it`](https://huggingface.co/google/gemma-2-27b-it) | 2x a100 (40G each) | 290 tokens/s| 2671 tokens/s|
