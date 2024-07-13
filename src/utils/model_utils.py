@@ -24,7 +24,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataP
 from torch.distributed.fsdp.wrap import _or_policy, lambda_auto_wrap_policy, transformer_auto_wrap_policy
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig, PreTrainedModel
 
-from src.utils.save_utils import get_latest_checkpoint_dir
+from src.utils.save_utils import checkpoint_exists, get_latest_checkpoint_dir
 
 FLAGS = flags.FLAGS
 
@@ -48,6 +48,7 @@ flags.DEFINE_boolean("use_activation_checkpointing", True, "whether to use activ
 flags.DEFINE_boolean("enable_nf4", False, "whether to apply nf4 4-bit quantization.")
 
 flags.DEFINE_string("sharding_strategy", "NO_SHARD", "NO_SHARD | HYBRID_SHARD | SHARD_GRAD_OP")
+flags.DEFINE_boolean("ddp", True, "is this a pure ddp run?")
 
 
 def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
@@ -62,8 +63,9 @@ def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
     """
     # See github.com/pytorch/pytorch/pull/102212
     base_model.load_state_dict(base_model.state_dict(), assign=True)
-    if FLAGS.path_to_peft_adapter_to_restore != "":
-        checkpoint_path = os.path.join(FLAGS.path_to_peft_adapter_to_restore, "checkpoints")
+    checkpoint = checkpoint_exists(FLAGS.checkpoint_folder)
+    if checkpoint:
+        checkpoint_path = os.path.join(FLAGS.checkpoint_folder, "checkpoints")
         peft_adapter_path = os.path.join(checkpoint_path, get_latest_checkpoint_dir(checkpoint_path))
         lora_model = PeftModel.from_pretrained(
             base_model,
@@ -128,22 +130,24 @@ def load_model(path: str, local_rank: int, use_safetensors: bool = True, device:
         )
         model_args["quantization_config"] = nf4_config
 
-    model = AutoModelForCausalLM.from_pretrained(
-        path,
-        **model_args,
-    )
-
-    # if not FLAGS.low_cpu_mem_usage or local_rank == 0:
-    #    model = AutoModelForCausalLM.from_pretrained(
-    #        path,
-    #        **model_args,
-    #    )
-    # else:
-    #    with torch.device("meta"):
-    #        model = AutoModelForCausalLM.from_pretrained(
-    #            path,
-    #            **model_args,
-    #        )
+    if FLAGS.ddp:
+        model = AutoModelForCausalLM.from_pretrained(
+            path,
+            **model_args,
+        )
+    else:
+        # for fsdp
+        if not FLAGS.low_cpu_mem_usage or local_rank == 0:
+            model = AutoModelForCausalLM.from_pretrained(
+                path,
+                **model_args,
+            )
+        else:
+            with torch.device("meta"):
+                model = AutoModelForCausalLM.from_pretrained(
+                    path,
+                    **model_args,
+                )
 
     return model
 

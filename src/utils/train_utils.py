@@ -31,7 +31,6 @@ flags.DEFINE_boolean("gradient_clipping", True, "use gradient clipping or not?")
 flags.DEFINE_float("gradient_clipping_threshold", 1.0, "threshold for gradient clipping.")
 flags.DEFINE_boolean("run_validation", True, "run validation and compute metrics.")
 flags.DEFINE_string("checkpoint_on_metric", "loss", "loss | squadv2_metrics_f1")
-flags.DEFINE_boolean("ddp", True, "is this a pure ddp run?")
 flags.DEFINE_boolean("disable_scheduler", False, "Whether to disable scheduler or not.")
 
 
@@ -107,7 +106,7 @@ def train(
     _, checkpointed_epoch = find_checkpoint(model)
 
     # Start the training loop
-    for epoch in range(checkpointed_epoch, FLAGS.num_epochs):
+    for epoch in range(checkpointed_epoch - 1, FLAGS.num_epochs):
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
@@ -123,10 +122,9 @@ def train(
                     if FLAGS.max_train_step > 0 and total_train_steps > FLAGS.max_train_step:
                         max_steps_reached = True
                         if rank == 0:
-                            logging.info(
-                                "max training steps reached, stopping training, total train steps finished: ",
-                                total_train_steps - 1,
-                            )
+                            msg = "max training steps reached, stopping training,"
+                            msg += f" total train steps finished: {total_train_steps - 1}"
+                            logging.info(msg)
                         break
 
                     # next forward / backward pass will be synced
@@ -182,13 +180,13 @@ def train(
                             checkpoint_start_time = time.perf_counter()
                             if FLAGS.checkpoint_on_metric == "loss":
                                 if -eval_epoch_loss > best_val_score:
-                                    save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
+                                    save_checkpoint(model, step + 1, epoch + 1)
 
                             elif FLAGS.checkpoint_on_metric != "loss":
                                 for score_name, score_val in eval_scores.items():
                                     if score_name == FLAGS.checkpoint_on_metric:
                                         if score_val > best_val_score:
-                                            save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
+                                            save_checkpoint(model, step + 1, epoch + 1)
 
                             checkpoint_end_time = time.perf_counter() - checkpoint_start_time
                             checkpoint_times.append(checkpoint_end_time)
@@ -267,13 +265,13 @@ def train(
             checkpoint_start_time = time.perf_counter()
             if FLAGS.checkpoint_on_metric == "loss":
                 if -eval_epoch_loss > best_val_score:
-                    save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
+                    save_checkpoint(model, step + 1, epoch + 1)
 
             elif FLAGS.checkpoint_on_metric != "loss":
                 for score_name, score_val in eval_scores.items():
                     if score_name == FLAGS.checkpoint_on_metric:
                         if score_val > best_val_score:
-                            save_checkpoint(model, step + 1, epoch + 1, FLAGS.ddp)
+                            save_checkpoint(model, step + 1, epoch + 1)
 
             checkpoint_end_time = time.perf_counter() - checkpoint_start_time
             checkpoint_times.append(checkpoint_end_time)

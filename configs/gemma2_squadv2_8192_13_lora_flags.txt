@@ -13,7 +13,7 @@
 --use_activation_checkpointing
 --sharding_strategy=NO_SHARD
 --use_profiler=false
---max_train_step=0
+--max_train_step=1024
 --max_eval_step=0
 --num_epochs=1
 --steps_before_evaluation=768

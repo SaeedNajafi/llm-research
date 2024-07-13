@@ -23,16 +23,6 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("checkpoint_folder", "./checkpoints/gemma2-1024-13", "a path for checkpoint.")
 
 
-def deploy_model(model: Any) -> None:
-    """Merge lora into base model and save tokenizer and model for deployment
-    with vllm."""
-    deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
-    os.makedirs(deploy_dir, exist_ok=True)
-    model.tokenizer.save_pretrained(deploy_dir)
-    merged_model = model.model.merge_and_unload()
-    merged_model.save_pretrained(deploy_dir, safe_serialization=False)
-
-
 def checkpoint_exists(output_dir: str) -> bool:
     """Check if a checkpoint exists.
 
@@ -131,7 +121,7 @@ def get_latest_checkpoint_dir(folder_path: str) -> str:
         return epoch_folder
 
 
-def save_consolidated_model(model: nn.Module, save_dir: str, rank: int, ddp: bool = True) -> None:
+def save_consolidated_model(model: nn.Module, save_dir: str, rank: int) -> None:
     """Save the sharded model's parameters consolidated under a single file.
 
     Args:
@@ -142,11 +132,11 @@ def save_consolidated_model(model: nn.Module, save_dir: str, rank: int, ddp: boo
     """
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, "model.bin")
-    if ddp:
+    if model.distributed_strategy == "ddp":
         state_dict = model.state_dict()
         if rank == 0:
             torch.save(state_dict, save_path)
-    else:
+    elif model.distributed_strategy == "fsdp":
         cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
         with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
             state_dict = model.state_dict()
@@ -154,33 +144,12 @@ def save_consolidated_model(model: nn.Module, save_dir: str, rank: int, ddp: boo
                 torch.save(state_dict, save_path)
 
 
-def get_peft_adapter_tensor_dict(model: peft.peft_model.PeftModel, ddp: bool = True) -> Dict[str, torch.Tensor] | None:
-    """Return LoRA PEFT Adapter tensor state dict on rank 0.
-
-    Returns None for all other ranks.
-    """
-    if ddp:
-        if dist.get_rank() == 0:
-            return peft.utils.save_and_load.get_peft_model_state_dict(model)
-        return None
-    else:
-        with FSDP.state_dict_type(
-            model,
-            StateDictType.FULL_STATE_DICT,
-            FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
-        ):
-            if dist.get_rank() == 0:
-                return peft.utils.save_and_load.get_peft_model_state_dict(model)
-
-            return None
-
-
-def save_peft_adapter(model: peft.peft_model.PeftModel, output_path: str, ddp: bool = True) -> None:
+def save_peft_adapter(model: peft.peft_model.PeftModel, output_path: str, distributed_strategy: str) -> None:
     """Save peft adapter to filesystem in a FSDP environment."""
-    if ddp:
+    if distributed_strategy == "ddp":
         if dist.get_rank() == 0:
             model.save_pretrained(output_path)
-    else:
+    elif distributed_strategy == "fsdp":
         with FSDP.state_dict_type(
             model,
             StateDictType.FULL_STATE_DICT,
@@ -196,7 +165,6 @@ def save_model_and_optimizer(
     output_dir: str,
     rank: int,
     include_model_state: bool = True,
-    ddp: bool = True,
 ) -> None:
     """Save model and optimizer states.
 
@@ -212,7 +180,7 @@ def save_model_and_optimizer(
     """
     os.makedirs(output_dir, exist_ok=True)
     save_path = os.path.join(output_dir, "model_optim.bin")
-    if ddp:
+    if model.distributed_strategy == "ddp":
         if rank == 0:
             full_state = {"optim_state": optimizer.state_dict()}
             if include_model_state:
@@ -220,7 +188,7 @@ def save_model_and_optimizer(
             torch.save(full_state, save_path)
             logging.info(f"States saved to {save_path}.")
 
-    else:
+    elif model.distributed_strategy == "fsdp":
         opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
         with FSDP.state_dict_type(
             model,
@@ -248,7 +216,7 @@ def save_model_and_optimizer(
 
 
 def load_model_and_optimizer(
-    optimizer: Optimizer, model: nn.Module, rank: int, input_dir: str, optimizer_only: bool = False, ddp: bool = True
+    optimizer: Optimizer, model: nn.Module, rank: int, input_dir: str, optimizer_only: bool = False
 ) -> None:
     """Load optimizer states and model weight, if found.
 
@@ -264,7 +232,7 @@ def load_model_and_optimizer(
     if dist.get_rank() == 0:
         logging.info(f"Loading states from {input_dir}.")
 
-    if ddp:
+    if model.distributed_strategy == "ddp":
         map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
         input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
@@ -272,7 +240,7 @@ def load_model_and_optimizer(
             model.load_state_dict(state_dict["model_state"])
         optimizer.load_state_dict(state_dict["optim_state"])
 
-    else:
+    elif model.distributed_strategy == "fsdp":
         with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT):
             model_state_dict = model.state_dict()
             checkpoint = {"model_state": model_state_dict}
@@ -324,7 +292,7 @@ def save_scheduler(
         logging.info(f"Scheduler state saved to {output_scheduler_file}.")
 
 
-def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, ddp: bool = True) -> None:
+def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distributed_strategy: str) -> None:
     """Load scheduler states.
 
     Args:
@@ -333,7 +301,7 @@ def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, ddp: bool 
         input_dir: The checkpointing directory.
         rank: The worker's rank.
     """
-    if ddp:
+    if distributed_strategy == "ddp":
         sched_name = "scheduler.bin"
         input_scheduler_file = os.path.join(input_dir, sched_name)
         if rank == 0:
@@ -343,7 +311,7 @@ def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, ddp: bool 
         scheduler.load_state_dict(state_dict)
         if rank == 0:
             logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
-    else:
+    elif distributed_strategy == "fsdp":
         sched_name = "scheduler.bin"
         input_scheduler_file = os.path.join(input_dir, sched_name)
         if rank == 0:
@@ -375,7 +343,7 @@ def _should_save(rank: int, strategy: ShardingStrategy) -> bool:
     return True
 
 
-def save_checkpoint(model: Any, step: int, epoch: int, ddp: bool = True) -> None:
+def save_checkpoint(model: Any, step: int, epoch: int) -> None:
     """Save all states.
 
     Args:
@@ -403,17 +371,17 @@ def save_checkpoint(model: Any, step: int, epoch: int, ddp: bool = True) -> None
 
     # If peft is enabled, save only the peft adapters
     # and adapter optimizer state, but not base LLM weights.
-    save_model_and_optimizer(model.optimizer, model, save_dir, rank, include_model_state=not FLAGS.use_peft, ddp=ddp)
+    save_model_and_optimizer(model.optimizer, model, save_dir, rank, include_model_state=not FLAGS.use_peft)
 
     if FLAGS.use_peft:
-        save_peft_adapter(model.model, save_dir, ddp)
+        save_peft_adapter(model.model, save_dir, distributed_strategy=model.distributed_strategy)
 
     save_scheduler(model.scheduler, save_dir, rank)
 
     dist.barrier()
 
 
-def load_checkpoint(model: Any, checkpoint_dir: str, ddp: bool = True) -> Tuple[int, int]:
+def load_checkpoint(model: Any, checkpoint_dir: str) -> Tuple[int, int]:
     """Load all states.
 
     Args:
@@ -434,15 +402,13 @@ def load_checkpoint(model: Any, checkpoint_dir: str, ddp: bool = True) -> Tuple[
         assert model.is_peft_adapter_restored
 
     # Skip overwriting base model weights if peft is enabled.
-    load_model_and_optimizer(
-        model.optimizer, model.model, rank, checkpoint_dir, optimizer_only=model.is_peft_adapter_restored, ddp=ddp
-    )
-    load_scheduler(model.scheduler, checkpoint_dir, rank, ddp)
+    load_model_and_optimizer(model.optimizer, model.model, rank, checkpoint_dir, optimizer_only=model.is_peft_adapter_restored)
+    load_scheduler(model.scheduler, checkpoint_dir, rank, distributed_strategy=model.distributed_strategy)
     dist.barrier()
     return step, epoch
 
 
-def find_checkpoint(model: Any, ddp: bool = True) -> Tuple[int, int]:
+def find_checkpoint(model: Any) -> Tuple[int, int]:
     """Find and load checkpoint if it exists.
 
     Args:
@@ -463,10 +429,10 @@ def find_checkpoint(model: Any, ddp: bool = True) -> Tuple[int, int]:
         latest_ckpt_dir = get_latest_checkpoint_dir(main_ckpt_dir)
         full_ckpt_dir = os.path.join(main_ckpt_dir, latest_ckpt_dir)
         logging.info(f"Checkpoint found at {full_ckpt_dir}.")
-        checkpointed_step, checkpointed_epoch = load_checkpoint(model, full_ckpt_dir, ddp)
+        checkpointed_step, checkpointed_epoch = load_checkpoint(model, full_ckpt_dir)
     else:
-        checkpointed_epoch = 0
-        checkpointed_step = 0
+        checkpointed_epoch = 1
+        checkpointed_step = 1
     return checkpointed_step, checkpointed_epoch
 
 
