@@ -1,26 +1,20 @@
 #!/bin/bash
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=48G
-#SBATCH --exclusive
+
+#SBATCH --job-name=vllm-inference
 #SBATCH --ntasks-per-node=1
 #SBATCH --open-mode=append
 #SBATCH --wait-all-nodes=1
+#SBATCH --output=%x_%j.out
+#SBATCH --error=%x_%j.err
+
+LOG_DIR=$1
+
+# enable conda env properly.
+source ${CURR_DIR}/job_submission/env_up.sh
 
 date;pwd
 
 nvidia-smi
-
-module --force purge
-
-source activate llm-env
-
-export CUDA_HOME=$CONDA_PREFIX
-
-export NCCL_HOME=$CONDA_PREFIX
-
-export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
-
-# source ${SRC_DIR}/find_port.sh
 
 # Getting the node names
 nodes=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
@@ -29,9 +23,9 @@ nodes_array=($nodes)
 head_node=${nodes_array[0]}
 head_node_ip=$(srun --nodes=1 --ntasks=1 -w "$head_node" hostname --ip-address)
 
-# Find port for head node
-# head_node_port=$(find_available_port $head_node_ip 8080 65535)
-head_node_port=3456
+# Find port for head node and vllm.
+head_node_port="$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')"
+vllm_port_number="$(python -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')"
 
 # Starting the Ray head node
 ip_head=$head_node_ip:$head_node_port
@@ -61,21 +55,18 @@ for ((i = 1; i <= worker_num; i++)); do
     sleep 5
 done
 
-#vllm_port_number=$(find_available_port $head_node_ip 8080 65535)
-
-vllm_port_number=3457
-
 echo "Server address: http://${head_node_ip}:${vllm_port_number}/v1"
-echo "http://${head_node_ip}:${vllm_port_number}/v1" > ${VLLM_BASE_URL_FILENAME}
 
+LOG_PATH="${LOG_DIR}/log_${SLURM_JOB_ID}_rank_${SLURM_PROCID}.log"
+# Make logging directories.
+mkdir -p "${LOG_DIR}"
+echo "Placing logs in: ${LOG_DIR}"
 
-# source ${VENV_BASE}/bin/activate
 VLLM_ATTENTION_BACKEND=FLASHINFER python3 -m vllm.entrypoints.openai.api_server \
     --model ${VLLM_MODEL_WEIGHTS} \
     --host "0.0.0.0" \
     --port ${vllm_port_number} \
     --tensor-parallel-size $((NUM_NODES*NUM_GPUS)) \
-    --dtype ${VLLM_DATA_TYPE} \
-    --load-format safetensors \
     --trust-remote-code \
-    --max-logprobs ${VLLM_MAX_LOGPROBS}
+    --max-logprobs ${VLLM_MAX_LOGPROBS} \
+    --distributed-executor-backend ray >> ${LOG_PATH} 2>&1

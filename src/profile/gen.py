@@ -1,4 +1,6 @@
+import argparse
 import time
+from typing import List
 
 import requests
 
@@ -17,7 +19,7 @@ HEADERS = {
 PROMPTS = [
     "Translate the following English text to French: 'Hello, how are you?'",
     "What is the square root of 144?",
-    "Summarize the following paragraph: 'Artificial intelligence refers to the simulation of human intelligence in machines...'",
+    "Summarize the following paragraph: 'Artificial intelligence refers to ...'",
     "Explain the process of photosynthesis in plants.",
     "What are the main differences between classical and quantum physics?",
     "Summarize the plot of 'To Kill a Mockingbird' by Harper Lee.",
@@ -71,8 +73,8 @@ PROMPTS = [
 ]
 
 
-def send_request(prompt):
-    data = {"model": MODEL_PATH, "prompt": prompt, "max_tokens": 100}
+def send_request(prompts: List[str]) -> None | float:
+    data = {"model": MODEL_PATH, "prompt": prompts, "max_tokens": 100}
     start_time = time.time()
     response = requests.post(f"{ENDPOINT}/completions", headers=HEADERS, json=data)
     duration = time.time() - start_time
@@ -82,7 +84,21 @@ def send_request(prompt):
         return None
 
 
-def main():
+def main() -> None:
+    # Create the parser
+    parser = argparse.ArgumentParser(description="Send sample jobs to see if the server works.")
+
+    # Add the arguments
+    parser.add_argument("--endpoint", type=str, help="server address")
+    parser.add_argument("--model_path", type=str, help="model path")
+
+    # Execute the parse_args() method
+    args = parser.parse_args()
+
+    global MODEL_PATH, ENDPOINT
+    MODEL_PATH = args.model_path
+    ENDPOINT = args.endpoint
+
     for i in range(10):
         print("Sending 20x requests 0-52...")
         send_request(PROMPTS * 20)
