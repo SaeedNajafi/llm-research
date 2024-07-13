@@ -37,5 +37,5 @@
 --project_name=llm_research_squadv2
 --experiment_type=normal_no_icl
 --train_batch_size=1
---eval_batch_size=8
+--eval_batch_size=4
 --ddp
