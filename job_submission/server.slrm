@@ -34,9 +34,12 @@ echo "IP Head: $ip_head"
 
 echo "Starting HEAD at $head_node"
 
+TOTAL_CPUS_PER_NODE=$((CPUS_PER_GPU*GPUS_PER_NODE))
+
+
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$head_node_port \
-    --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus "${NUM_GPUS}" --block &
+    --num-cpus "${TOTAL_CPUS_PER_NODE}" --num-gpus "${GPUS_PER_NODE}" --block &
 
 # Starting the Ray worker nodes
 # Optional, though may be useful in certain versions of Ray < 1.0.
@@ -50,7 +53,7 @@ for ((i = 1; i <= worker_num; i++)); do
     echo "Starting WORKER $i at $node_i"
     srun --nodes=1 --ntasks=1 -w "$node_i" \
             ray start --address "$ip_head" \
-            --num-cpus "${SLURM_CPUS_PER_TASK}" --num-gpus "${NUM_GPUS}" --block &
+            --num-cpus "${TOTAL_CPUS_PER_NODE}" --num-gpus "${GPUS_PER_NODE}" --block &
 
     sleep 5
 done
@@ -66,7 +69,7 @@ VLLM_ATTENTION_BACKEND=FLASHINFER python3 -m vllm.entrypoints.openai.api_server 
     --model ${VLLM_MODEL_WEIGHTS} \
     --host "0.0.0.0" \
     --port ${vllm_port_number} \
-    --tensor-parallel-size $((NUM_NODES*NUM_GPUS)) \
+    --tensor-parallel-size $((SLURM_JOB_NUM_NODES*GPUS_PER_NODE)) \
     --trust-remote-code \
     --max-logprobs ${VLLM_MAX_LOGPROBS} \
     --distributed-executor-backend ray >> ${LOG_PATH} 2>&1
