@@ -73,10 +73,10 @@ PROMPTS = [
 ]
 
 
-def send_request(prompts: List[str]) -> None | float:
-    data = {"model": MODEL_PATH, "prompt": prompts, "max_tokens": 100}
+def send_request(prompts: List[str], endpoint: str, model_path: str) -> None | float:
+    data = {"model": model_path, "prompt": prompts, "max_tokens": 100}
     start_time = time.time()
-    response = requests.post(f"{ENDPOINT}/completions", headers=HEADERS, json=data)
+    response = requests.post(f"{endpoint}/completions", headers=HEADERS, json=data)
     duration = time.time() - start_time
     if response.status_code == 200:
         return duration
@@ -95,13 +95,9 @@ def main() -> None:
     # Execute the parse_args() method
     args = parser.parse_args()
 
-    global MODEL_PATH, ENDPOINT
-    MODEL_PATH = args.model_path
-    ENDPOINT = args.endpoint
-
     for i in range(10):
         print("Sending 20x requests 0-52...")
-        send_request(PROMPTS * 20)
+        send_request(PROMPTS * 20, args.endpoint, args.model_path)
     print("Done!")
 
 

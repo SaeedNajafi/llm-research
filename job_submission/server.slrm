@@ -36,6 +36,7 @@ echo "Starting HEAD at $head_node"
 
 TOTAL_CPUS_PER_NODE=$((CPUS_PER_GPU*GPUS_PER_NODE))
 
+export VLLM_ATTENTION_BACKEND="FLASHINFER"
 
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$head_node_port \
@@ -52,7 +53,7 @@ for ((i = 1; i <= worker_num; i++)); do
     node_i=${nodes_array[$i]}
     echo "Starting WORKER $i at $node_i"
     srun --nodes=1 --ntasks=1 -w "$node_i" \
-            ray start --address "$ip_head" \
+        ray start --address "$ip_head" \
             --num-cpus "${TOTAL_CPUS_PER_NODE}" --num-gpus "${GPUS_PER_NODE}" --block &
 
     sleep 5
@@ -65,11 +66,13 @@ LOG_PATH="${LOG_DIR}/log_${SLURM_JOB_ID}_rank_${SLURM_PROCID}.log"
 mkdir -p "${LOG_DIR}"
 echo "Placing logs in: ${LOG_DIR}"
 
-VLLM_ATTENTION_BACKEND=FLASHINFER python3 -m vllm.entrypoints.openai.api_server \
+python3 -m vllm.entrypoints.openai.api_server \
     --model ${VLLM_MODEL_WEIGHTS} \
     --host "0.0.0.0" \
     --port ${vllm_port_number} \
     --tensor-parallel-size $((SLURM_JOB_NUM_NODES*GPUS_PER_NODE)) \
     --trust-remote-code \
     --max-logprobs ${VLLM_MAX_LOGPROBS} \
-    --distributed-executor-backend ray >> ${LOG_PATH} 2>&1
+    --distributed-executor-backend ray \
+    --engine-use-ray \
+    --worker-use-ray >> ${LOG_PATH} 2>&1
