@@ -5,7 +5,9 @@ from openai import OpenAI
 from openai.error import APIConnectionError, APIError, RateLimitError, ServiceUnavailableError, Timeout
 
 
-class OpenAIChatClient:
+class OpenAIClient:
+    """A wrapper for sending requests for openai compatible server."""
+
     def __init__(
         self,
         server_url: str,
@@ -14,34 +16,42 @@ class OpenAIChatClient:
         max_new_tokens: int = 256,
         max_retries: int = 5,
         seconds_between_retries: int = 10,
+        request_batch_size: int = 8,
     ) -> None:
-        """Initialize the OpenAI chat complete client."""
+        """Initialize the OpenAI client."""
 
         self.server_url = server_url
         self.model_name = model_name
         self.api_key = api_key
         self.max_new_tokens = max_new_tokens
-        self.max_retries = max_retries
         assert self.max_retries > 0
+        assert self.seconds_between_retries > 0
+        self.max_retries = max_retries
         self.seconds_between_retries = seconds_between_retries
-        self.client = OpenAI(base_url=server_url, api_key=self.api_key).with_options(max_retries=self.max_retries)
+        self.request_batch_size = request_batch_size
+        self.client = OpenAI(base_url=self.server_url, api_key=self.api_key).with_options(max_retries=self.max_retries)
 
     def __call__(
         self,
         inputs: List[str],
         request_mode: str,
         candidates: int = 1,
-        top_p: float = 0.95,
+        top_p: float = 0.9,
         temperature: float = 0.001,
         logprobs: bool = True,
         seed: int = 42,
     ) -> List[List[str]]:
         """Send the request and get the output."""
+        kwargs = {
+            "temperature": temperature,
+            "top_p": top_p,
+            "n": candidates,
+            "max_tokens": self.max_new_tokens,
+            "logprobs": logprobs,
+            "seed": seed,
+        }
         responses = []
         for input in inputs:
-            kwargs = {"temperature": temperature, "top_p": top_p, "n": candidates, "logprobs": logprobs, "seed": seed}
-
-            kwargs["max_tokens"] = self.max_new_tokens
             self.request_counter = self.max_retries
             response = self.api_request(
                 input,
@@ -49,12 +59,12 @@ class OpenAIChatClient:
                 **kwargs,
             )
             if candidates == 1:
-                if len(response):
+                if response is not None and len(response) > 0:
                     responses.append(response[0])
                 else:
                     responses.append(["<request has failed!>"])
             else:
-                if len(response):
+                if response is not None and len(response) > 0:
                     responses.append(response)
                 else:
                     responses.append(["<request has failed!>"] * candidates)
