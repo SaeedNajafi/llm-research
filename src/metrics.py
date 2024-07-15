@@ -2,6 +2,7 @@
 predictions."""
 
 import collections
+import math
 import re
 import string
 from typing import Any, Dict, List
@@ -73,7 +74,7 @@ class QAMetricModel:
         """Compute the metric for the given predictions and multiple
         references."""
         all_scores = []
-        num_chunks = max(len(predictions) // self.batch_size, 1)
+        num_chunks = math.ceil(len(predictions) / self.batch_size)
         for chunk_i in range(num_chunks):
             clear_gpu_cache()
 

@@ -1,4 +1,12 @@
+"""Submit a parallel requests to the server.
+
+Usage:
+python3 src/llm_client.py --server_url "http://localhost:8080/v1" --request_batch_size 128 --num_threads 8 >> file.txt 2>&1
+"""
+
+import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List
 
 from absl import app, flags, logging
@@ -13,7 +21,8 @@ flags.DEFINE_string("model_name", "/model-weights/Meta-Llama-3-8B-Instruct", "co
 flags.DEFINE_integer("max_new_tokens", 256, "max number of tokens to generate per sequence.")
 flags.DEFINE_integer("max_retries", 5, "number of retries before failure.")
 flags.DEFINE_integer("seconds_between_retries", 10, "sleep time between retries.")
-flags.DEFINE_integer("request_batch_size", 8, "batch size to send group requests in one call.")
+flags.DEFINE_integer("request_batch_size", 128, "batch size to send group requests in one call.")
+flags.DEFINE_integer("num_threads", 8, "number of threads for parallel client calls.")
 flags.DEFINE_list("stop_token_ids", "128001,128009", "stop token ids for a particular model.")
 
 
@@ -64,7 +73,7 @@ class MyOpenAIClient:
             "extra_body": {"stop_token_ids": self.stop_token_ids},
         }
         responses: List[CompletionChoice] = []
-        num_chunks = max(len(inputs) // self.request_batch_size, 1)
+        num_chunks = math.ceil(len(inputs) / self.request_batch_size)
         for chunk_i in range(num_chunks):
             if (chunk_i + 1) * self.request_batch_size <= len(inputs):
                 sub_inputs = inputs[chunk_i * self.request_batch_size : (chunk_i + 1) * self.request_batch_size]
@@ -100,6 +109,55 @@ class MyOpenAIClient:
             else:
                 logging.info(f"Final retry ended with error: {e}.")
                 return None
+
+
+def parallel_generator(
+    server_url: str,
+    model_name: str,
+    inputs: List[str],
+    num_threads: int = 2,
+    max_new_tokens: int = 256,
+    max_retries: int = 5,
+    seconds_between_retries: int = 10,
+    request_batch_size: int = 8,
+    stop_token_ids: List[str] = ["128001", "128009"],
+    top_p: float = 0.9,
+    temperature: float = 0.001,
+    logprobs: bool = True,
+    seed: int = 42,
+) -> List[CompletionChoice]:
+    """Call the openai client in parallel using different threads."""
+    final_responses = []
+    assert num_threads > 0
+    chunk_size = len(inputs) // num_threads
+    if chunk_size == 0:
+        num_threads = len(inputs)
+        chunk_size = 1
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        futures = []
+        for thread_i in range(num_threads):
+            if thread_i < num_threads - 1:
+                sub_inputs = inputs[thread_i * chunk_size : (thread_i + 1) * chunk_size]
+            else:
+                sub_inputs = inputs[thread_i * chunk_size :]
+
+            thread_client = MyOpenAIClient(
+                server_url=server_url,
+                model_name=model_name,
+                max_new_tokens=max_new_tokens,
+                max_retries=max_retries,
+                seconds_between_retries=seconds_between_retries,
+                request_batch_size=request_batch_size,
+                stop_token_ids=stop_token_ids,
+            )
+            future = executor.submit(thread_client, sub_inputs, top_p, temperature, logprobs, seed)
+            futures.append(future)
+
+        # Collect the results from each future.
+        for future in futures:
+            final_responses.extend(future.result())
+
+    return final_responses
 
 
 def main(argv: Any) -> None:
@@ -167,20 +225,24 @@ def main(argv: Any) -> None:
     full_instruction = instruction_template.format(instruction="provide a short answer for the question.")
     full_sample_inputs = [full_instruction + input_template.format(input=sample) for sample in sample_inputs]
 
-    generator = MyOpenAIClient(
+    start_time = time.perf_counter()
+    responses = parallel_generator(
         server_url=FLAGS.server_url,
         model_name=FLAGS.model_name,
+        inputs=full_sample_inputs * 10,
+        num_threads=FLAGS.num_threads,
         max_new_tokens=FLAGS.max_new_tokens,
         max_retries=FLAGS.max_retries,
         seconds_between_retries=FLAGS.seconds_between_retries,
         request_batch_size=FLAGS.request_batch_size,
         stop_token_ids=FLAGS.stop_token_ids,
     )
-    start_time = time.perf_counter()
-    responses = generator(inputs=full_sample_inputs)
     end_time = time.perf_counter()
+    logging.info(len(sample_inputs))
+    logging.info(len(responses))
     for response in responses:
-        print(response.index, response.text, mean(response.logprobs.token_logprobs))
+        msg = f"Text: {response.text}, LogProbs: {mean(response.logprobs.token_logprobs)}"
+        logging.info(msg)
 
     logging.info(f"Finished in {end_time - start_time} seconds!")
 
