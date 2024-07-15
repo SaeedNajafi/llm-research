@@ -36,7 +36,8 @@ echo "Starting HEAD at $head_node"
 
 TOTAL_CPUS_PER_NODE=$((CPUS_PER_GPU*GPUS_PER_NODE))
 
-export VLLM_ATTENTION_BACKEND="FLASHINFER"
+# Not ready yet.
+# export VLLM_ATTENTION_BACKEND="FLASHINFER"
 
 srun --nodes=1 --ntasks=1 -w "$head_node" \
     ray start --head --node-ip-address="$head_node_ip" --port=$head_node_port \
@@ -75,5 +76,4 @@ python3 -m vllm.entrypoints.openai.api_server \
     --max-logprobs ${VLLM_MAX_LOGPROBS} \
     --distributed-executor-backend ray \
     --engine-use-ray \
-    --worker-use-ray \
-    --max_num_seqs 8 >> ${LOG_PATH} 2>&1
+    --worker-use-ray >> ${LOG_PATH} 2>&1
