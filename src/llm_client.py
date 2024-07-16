@@ -1,4 +1,4 @@
-"""Submit a parallel requests to the server.
+"""Submit parallel requests to the server.
 
 Usage:
 python3 src/llm_client.py --server_url "http://localhost:8080/v1" --request_batch_size 128 --num_threads 8 >> file.txt 2>&1
@@ -11,7 +11,7 @@ from typing import Any, List
 
 from absl import app, flags, logging
 from numpy import mean
-from openai import APIConnectionError, APIError, OpenAI, RateLimitError, Timeout
+from openai import OpenAI
 from openai.types import CompletionChoice
 
 FLAGS = flags.FLAGS
@@ -87,7 +87,9 @@ class MyOpenAIClient:
             if sub_responses is not None:
                 responses.extend(sub_responses)
             else:
-                responses.extend([CompletionChoice(text="<API has failed!>")] * len(sub_inputs))
+                responses.extend(
+                    [CompletionChoice(text="<API has failed!>", finish_reason="failure", index=-1)] * len(sub_inputs)
+                )
         return responses
 
     def api_request(self, inputs: List[str], **kwargs: Any) -> None | List[CompletionChoice]:
@@ -96,12 +98,7 @@ class MyOpenAIClient:
         try:
             responses = self.client.completions.create(model=self.model_name, prompt=inputs, stream=False, **kwargs)
             return responses.choices
-        except (
-            RateLimitError,
-            APIConnectionError,
-            APIError,
-            Timeout,
-        ) as e:
+        except Exception as e:
             if self.request_counter > 0:
                 logging.info(f"Error: {e}. Waiting {self.seconds_between_retries} seconds before retrying.")
                 time.sleep(self.seconds_between_retries)
