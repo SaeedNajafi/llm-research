@@ -32,7 +32,7 @@
 --lr=5e-5
 --lr_min=5e-6
 --weight_decay=0.01
---mode=train
+--mode=deploy
 --seed=13
 --project_name=llm_research_squadv2
 --experiment_type=normal_no_icl

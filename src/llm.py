@@ -46,9 +46,7 @@ _LLAMA3_EXTRA_TOKENS = {
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
 
-    def __init__(
-        self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0, mode: str = "no_deploy"
-    ) -> None:
+    def __init__(self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0) -> None:
         super().__init__()
 
         self.rank = rank
@@ -104,17 +102,14 @@ class LLM(torch.nn.Module):
         else:
             self.distributed_strategy = "fsdp"
 
-        if mode == "deploy":
+        if self.distributed_strategy == "ddp":
+            model = DDP(model, device_ids=[model.device])
+            self.model = model.module
+        elif self.distributed_strategy == "fsdp":
+            decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
+            assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
+            model = shard_model(model, decoder_layer_module, local_rank=local_rank)
             self.model = model
-        else:
-            if self.distributed_strategy == "ddp":
-                model = DDP(model, device_ids=[model.device])
-                self.model = model.module
-            elif self.distributed_strategy == "fsdp":
-                decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
-                assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
-                model = shard_model(model, decoder_layer_module, local_rank=local_rank)
-                self.model = model
 
         self.device = model.device
         self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
@@ -264,8 +259,8 @@ class LLM(torch.nn.Module):
 class Llama3QA(LLM):
     """Class to implement Llama3."""
 
-    def __init__(self, local_rank: int = 0, rank: int = 0, mode: str = "no_deploy") -> None:
-        super().__init__(_LLAMA3_EXTRA_TOKENS, local_rank, rank, mode)
+    def __init__(self, local_rank: int = 0, rank: int = 0) -> None:
+        super().__init__(_LLAMA3_EXTRA_TOKENS, local_rank, rank)
 
         # Chat templates for llama3.
         self.instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
@@ -279,8 +274,8 @@ class Llama3QA(LLM):
 class Gemma2QA(LLM):
     """Class to implement Gemma2."""
 
-    def __init__(self, local_rank: int = 0, rank: int = 0, mode: str = "no_deploy") -> None:
-        super().__init__(None, local_rank, rank, mode)
+    def __init__(self, local_rank: int = 0, rank: int = 0) -> None:
+        super().__init__(None, local_rank, rank)
 
         # Chat templates for gemma2.
         self.instruction_template = "<bos><start_of_turn>user\n{instruction}"

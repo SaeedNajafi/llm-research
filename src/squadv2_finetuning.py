@@ -103,27 +103,6 @@ def main(argv: Any) -> None:
             for k, v in results.items():
                 wandb_run.summary[k] = v
 
-        if rank == 0:
-            del model
-            # Re-initialize the model here, it will load the latest peft adapters.
-            if FLAGS.llm_name == "gemma2":
-                model = Gemma2QA(local_rank, rank, mode="deploy")
-            elif FLAGS.llm_name == "llama3":
-                model = Llama3QA(local_rank, rank, mode="deploy")
-
-            # load the rest of the model weights if not peft.
-            _, _ = find_checkpoint(model)
-
-            deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
-            os.makedirs(deploy_dir, exist_ok=True)
-            model.tokenizer.save_pretrained(deploy_dir)
-            if FLAGS.use_peft:
-                # merge lora to the base model.
-                merged_model = model.model.merge_and_unload()
-            else:
-                merged_model = model.model
-            merged_model.save_pretrained(deploy_dir, safe_serialization=False)
-
     elif FLAGS.mode == "inference":
         test_dataloader = create_squadv2_dataloader(
             model,
@@ -147,6 +126,20 @@ def main(argv: Any) -> None:
             wandb_run,
             qa_metric_squadv2_metrics,
         )
+
+    elif FLAGS.mode == "deploy":
+        # load the rest of the model weights if not peft.
+        _, _ = find_checkpoint(model)
+
+        deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
+        os.makedirs(deploy_dir, exist_ok=True)
+        model.tokenizer.save_pretrained(deploy_dir)
+        if FLAGS.use_peft:
+            # merge lora to the base model.
+            merged_model = model.model.merge_and_unload()
+        else:
+            merged_model = model.model
+        merged_model.save_pretrained(deploy_dir, safe_serialization=False)
 
 
 if __name__ == "__main__":

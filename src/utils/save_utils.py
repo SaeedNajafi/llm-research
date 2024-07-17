@@ -216,7 +216,12 @@ def save_model_and_optimizer(
 
 
 def load_model_and_optimizer(
-    optimizer: Optimizer, model: nn.Module, rank: int, input_dir: str, optimizer_only: bool = False
+    optimizer: Optimizer,
+    model: nn.Module,
+    rank: int,
+    input_dir: str,
+    optimizer_only: bool = False,
+    distributed_strategy: str = "ddp",
 ) -> None:
     """Load optimizer states and model weight, if found.
 
@@ -232,7 +237,7 @@ def load_model_and_optimizer(
     if dist.get_rank() == 0:
         logging.info(f"Loading states from {input_dir}.")
 
-    if model.distributed_strategy == "ddp":
+    if distributed_strategy == "ddp":
         map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
         input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
@@ -240,7 +245,7 @@ def load_model_and_optimizer(
             model.load_state_dict(state_dict["model_state"])
         optimizer.load_state_dict(state_dict["optim_state"])
 
-    elif model.distributed_strategy == "fsdp":
+    elif distributed_strategy == "fsdp":
         with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT):
             model_state_dict = model.state_dict()
             checkpoint = {"model_state": model_state_dict}
@@ -371,7 +376,13 @@ def save_checkpoint(model: Any, step: int, epoch: int) -> None:
 
     # If peft is enabled, save only the peft adapters
     # and adapter optimizer state, but not base LLM weights.
-    save_model_and_optimizer(model.optimizer, model, save_dir, rank, include_model_state=not FLAGS.use_peft)
+    save_model_and_optimizer(
+        model.optimizer,
+        model,
+        save_dir,
+        rank,
+        include_model_state=not FLAGS.use_peft,
+    )
 
     if FLAGS.use_peft:
         save_peft_adapter(model.model, save_dir, distributed_strategy=model.distributed_strategy)

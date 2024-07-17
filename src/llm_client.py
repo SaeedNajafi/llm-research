@@ -24,6 +24,7 @@ flags.DEFINE_integer("seconds_between_retries", 10, "sleep time between retries.
 flags.DEFINE_integer("request_batch_size", 128, "batch size to send group requests in one call.")
 flags.DEFINE_integer("num_threads", 8, "number of threads for parallel client calls.")
 flags.DEFINE_list("stop_token_ids", "128001,128009", "stop token ids for a particular model.")
+flags.DEFINE_string("model_type", "llama3", "type of model.")
 
 
 class MyOpenAIClient:
@@ -38,7 +39,7 @@ class MyOpenAIClient:
         max_retries: int = 5,
         seconds_between_retries: int = 10,
         request_batch_size: int = 8,
-        stop_token_ids: List[str] = ["128001", "128009"],
+        stop_token_ids: List[int] = [128001, 128009],
     ) -> None:
         """Initialize the OpenAI client."""
 
@@ -51,7 +52,7 @@ class MyOpenAIClient:
         self.max_retries = max_retries
         self.seconds_between_retries = seconds_between_retries
         self.request_batch_size = request_batch_size
-        self.stop_token_ids = [int(id) for id in stop_token_ids]
+        self.stop_token_ids = stop_token_ids
         self.client = OpenAI(base_url=self.server_url, api_key=self.api_key).with_options(max_retries=self.max_retries)
 
     def __call__(
@@ -117,7 +118,7 @@ def parallel_generator(
     max_retries: int = 5,
     seconds_between_retries: int = 10,
     request_batch_size: int = 8,
-    stop_token_ids: List[str] = ["128001", "128009"],
+    stop_token_ids: List[int] = [128001, 128009],
     top_p: float = 0.9,
     temperature: float = 0.001,
     logprobs: bool = True,
@@ -217,9 +218,17 @@ def main(argv: Any) -> None:
         "How does the GPS system work?",
     ]
 
-    instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
-    input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
-    full_instruction = instruction_template.format(instruction="provide a short answer for the question.")
+    if FLAGS.model_type == "llama3":
+        instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
+        input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
+        stop_token_ids = [128001, 128009]
+        full_instruction = instruction_template.format(instruction="provide a short answer for the question.")
+    elif FLAGS.model_type == "gemma2":
+        instruction_template = "<bos><start_of_turn>user\n{instruction}"
+        input_template = "\n{input}<end_of_turn>\n<start_of_turn>model"
+        stop_token_ids = [1, 107]
+        full_instruction = instruction_template.format(instruction="provide a short answer for the question.")
+
     full_sample_inputs = [full_instruction + input_template.format(input=sample) for sample in sample_inputs]
 
     start_time = time.perf_counter()
@@ -232,7 +241,7 @@ def main(argv: Any) -> None:
         max_retries=FLAGS.max_retries,
         seconds_between_retries=FLAGS.seconds_between_retries,
         request_batch_size=FLAGS.request_batch_size,
-        stop_token_ids=FLAGS.stop_token_ids,
+        stop_token_ids=stop_token_ids,
     )
     end_time = time.perf_counter()
     logging.info(len(sample_inputs))
