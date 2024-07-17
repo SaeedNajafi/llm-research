@@ -36,7 +36,6 @@ echo "Starting HEAD at $head_node"
 
 TOTAL_CPUS_PER_NODE=$((CPUS_PER_GPU*GPUS_PER_NODE))
 
-# Not ready yet.
 export VLLM_ATTENTION_BACKEND="FLASHINFER"
 
 srun --nodes=1 --ntasks=1 -w "$head_node" \

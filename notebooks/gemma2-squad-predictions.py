@@ -14,9 +14,9 @@ input_template = "\n{input}<end_of_turn>\n<start_of_turn>model"
 output_template = "\n{output} <end_of_turn>"
 
 # Model name and server address
-model_name = "/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/gemma2/0.1_13_lora_rank_64/final_model"
-server_address = "http://172.17.8.9:58023/v1"
-output_path = "/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/gemma2/0.1_13_lora_rank_64/final-predictions"
+model_name = "/scratch/ssd004/scratch/snajafi/0.1_13_lora_rank_64/final_model"
+server_address = "http://172.17.8.41:42575/v1"
+output_path = "/scratch/ssd004/scratch/snajafi/0.1_13_lora_rank_64/final-predictions"
 
 
 input_file = "../data/0.1-shot-datasets/squad/original_validation.tsv"
@@ -44,11 +44,11 @@ for experiment_type in experiment_types:
             server_url=server_address,
             model_name=model_name,
             inputs=squad_inputs,
-            num_threads=1,
+            num_threads=2,
             max_new_tokens=256,
             max_retries=3,
             seconds_between_retries=5,
-            request_batch_size=32,
+            request_batch_size=16,
             stop_token_ids=[1, 107],
         )
         end_time = time.perf_counter()

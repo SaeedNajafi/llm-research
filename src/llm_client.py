@@ -88,9 +88,7 @@ class MyOpenAIClient:
             if sub_responses is not None:
                 responses.extend(sub_responses)
             else:
-                responses.extend(
-                    [CompletionChoice(text="<API has failed!>", finish_reason="failure", index=-1)] * len(sub_inputs)
-                )
+                responses.extend([CompletionChoice(text="<API has failed!>", finish_reason="stop", index=-1)] * len(sub_inputs))
         return responses
 
     def api_request(self, inputs: List[str], **kwargs: Any) -> None | List[CompletionChoice]:

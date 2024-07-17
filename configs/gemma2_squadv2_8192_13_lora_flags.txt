@@ -1,6 +1,6 @@
 --dev_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
 --train_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-train.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/gemma2/0.1_13_lora_rank_64
+--checkpoint_folder=/scratch/ssd004/scratch/snajafi/0.1_13_lora_rank_64
 --prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/gemma2/0.1_13_lora_rank_64/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
@@ -22,7 +22,7 @@
 --gradient_clipping_threshold=1.0
 --run_validation
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/gemma-2-9b-it
+--model_path=/model-weights/gemma-2-9b-it
 --llm_name=gemma2
 --t_0=5
 --top_p=0.9

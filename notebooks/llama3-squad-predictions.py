@@ -15,7 +15,7 @@ output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|e
 
 # Model name and server address
 model_name = "/model-weights/Meta-Llama-3-8B-Instruct"
-server_address = "http://172.17.8.9:58023/v1"
+server_address = "http://172.17.8.41:42575/v1"
 output_path = "/scratch/ssd004/scratch/snajafi/checkpoints/llama3-predictions"
 
 
