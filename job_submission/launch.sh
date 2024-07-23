@@ -15,7 +15,7 @@ export CURR_DIR="$(pwd)"
 
 if [ "${LAUNCH_MODE}" = "train" ]; then
     if [ "${CLUSTER_NAME}" = "narval" ]; then
-        sbatch --account ${ACCOUNT} \
+        ${COMMAND} --account ${ACCOUNT} \
             --nodes ${NNODES} \
             --gpus-per-node ${GPUS_PER_NODE} \
             --cpus-per-gpu ${CPUS_PER_GPU} \
@@ -25,7 +25,7 @@ if [ "${LAUNCH_MODE}" = "train" ]; then
             ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR}
 
     elif [ "${CLUSTER_NAME}" = "vcluster" ]; then
-        sbatch --nodes ${NNODES} \
+        ${COMMAND} --nodes ${NNODES} \
             --gpus-per-node ${GPUS_PER_NODE} \
             --cpus-per-gpu ${CPUS_PER_GPU} \
             --mem ${MEM}G \
@@ -38,7 +38,7 @@ if [ "${LAUNCH_MODE}" = "train" ]; then
 
 elif [ "${LAUNCH_MODE}" = "server" ]; then
     if [ "${CLUSTER_NAME}" = "narval" ]; then
-        sbatch --account ${ACCOUNT} \
+        ${COMMAND} --account ${ACCOUNT} \
             --nodes ${NNODES} \
             --gpus-per-node ${GPUS_PER_NODE} \
             --cpus-per-gpu ${CPUS_PER_GPU} \
@@ -47,7 +47,7 @@ elif [ "${LAUNCH_MODE}" = "server" ]; then
             ${CURR_DIR}/job_submission/server.slrm ${CURR_DIR}/${LOG_DIR}
 
     elif [ "${CLUSTER_NAME}" = "vcluster" ]; then
-        sbatch --nodes ${NNODES} \
+        ${COMMAND} --nodes ${NNODES} \
             --gpus-per-node ${GPUS_PER_NODE} \
             --cpus-per-gpu ${CPUS_PER_GPU} \
             --mem ${MEM}G \
