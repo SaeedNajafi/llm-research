@@ -1,5 +1,10 @@
 """This module implements different metrics used to evaluate the
-predictions."""
+predictions.
+Usage:
+python src/metrics.py --metric_device=cuda:0 \
+--metric_type llm2vec \
+--input_file /scratch/ssd004/scratch/snajafi/gemma2-9b-predictions/squadv2_predictions_original_validation.normal_no_icl.csv
+"""
 
 import collections
 import math
@@ -21,6 +26,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
 flags.DEFINE_integer("metric_batch_size", 32, "batch size used for the metric model.")
 flags.DEFINE_string("metric_type", "llm2vec", "llm2vec or sentence-t5 model?")
+flags.DEFINE_string("input_file", "/path/filename", "absolute path and name of the file.")
 
 
 def load_llm2vec(cuda_device: str) -> LLM2Vec:
@@ -66,7 +72,7 @@ class QAMetricModel:
         self.metric_type = metric_type
         if self.metric_type == "llm2vec":
             self.metric_model = load_llm2vec(self.device)
-            self.instruction = "Retrieve Wikipedia passages that answer the question"
+            self.instruction = "Retrieve Wikipedia passages that answer the question."
         elif self.metric_type == "sentence_t5":
             self.metric_model = SentenceTransformer(self.sentence_t5_model_id, device=self.device).eval()
 
@@ -129,13 +135,8 @@ class QAMetricModel:
                 j += j_len
 
             all_scores.append(torch.sum(dot_products * score_collector, dim=1))
-        return (
-            torch.stack(all_scores, dim=0)
-            .squeeze()
-            .reshape(
-                -1,
-            )
-        )
+
+        return torch.cat(tuple(all_scores), dim=0).squeeze()
 
 
 qa_metric_model = None
@@ -159,47 +160,78 @@ def lower(text: str) -> str:
     return text.lower()
 
 
+prefixes_txt_to_remove = [
+    "assistant\n\n",
+    "Here are the answers based on the provided passages:",
+    "**",
+    "The shortest continuous text span from the passage that serves as an answer to the given question is:\n\n",
+    "The shortest continuous text span from the passage that serves as an answer to the question is:\n\n",
+    "The shortest continuous text span that serves as an answer to the given question is:",
+    "Based on the passage, the correct answer is",
+    "The correct answer is",
+    "According to the passage,",
+    "Here is the answer:",
+    "the correct answer is",
+]
+
+prefixes_char_to_remove = ["<s>", "\n", ".", ":", "answer:", ","]
+
+suffixes_char_to_remove = ["</s>", "\n", ".", "*"]
+
+replace_with_space = [
+    "final answer11",
+    "final answer",
+    "Final Answer_11:" "from passage it can be inferred that",
+    "\n",
+    "*",
+    "Let me know if you have any other passages you'd like me to analyze!",
+]
+
+no_answer_indications = [
+    "<no_answer>",
+    "no_answer",
+    "noanswer",
+    "passage does not mention",
+    "there is no mention",
+]
+
+
 def postprocess_qa(txt: str) -> str:
     txt = str(txt)
-    txt = txt.removeprefix("assistant\n\n")
-    txt = txt.removeprefix(
-        "The shortest continuous text span from the passage that serves as an answer to the given question is:\n\n"
-    )
-    txt = txt.removeprefix(
-        "The shortest continuous text span from the passage that serves as an answer to the question is:\n\n"
-    )
-    txt = txt.removeprefix("The shortest continuous text span that serves as an answer to the given question is:\n\n")
-    txt = txt.removeprefix("Based on the passage, the correct answer is")
-    txt = txt.removeprefix("The correct answer is")
-    txt = txt.removeprefix("According to the passage,")
-    txt = txt.removeprefix("Here is the answer:")
-    txt = txt.removeprefix("the correct answer is")
+    txt = txt.replace("*", "")
+
+    for prefix in prefixes_txt_to_remove:
+        txt = txt.removeprefix(prefix)
+
     try:
-        txt = txt.split("Final Answer: ")[1]
+        txt = txt.split("Final Answer:")[1]
     except Exception:
         try:
-            txt = txt.split("Answer: ")[1]
+            txt = txt.split("Answer:")[1]
         except Exception:
-            pass
-    txt = txt.replace("final answer11", "")
-    txt = txt.replace("final answer", "")
-    txt = txt.replace("from passage it can be inferred that", "")
+            try:
+                txt = txt.split("Final Answer_11:")[1]
+            except Exception:
+                pass
+
     txt = txt.lower()
-    txt = txt.replace("\n", " ")
-    txt = txt.removesuffix("</s>")
-    txt = txt.removeprefix("<s>")
-    txt = txt.removeprefix("\n")
-    txt = txt.removesuffix("\n")
-    txt = txt.removeprefix(".")
-    txt = txt.removeprefix(":")
-    txt = txt.removesuffix(".")
-    txt = txt.removeprefix("answer:")
-    txt = txt.removeprefix(",")
+
+    for to_replace in replace_with_space:
+        txt = txt.replace(to_replace, "")
+
+    for prefix in prefixes_char_to_remove:
+        txt = txt.removeprefix(prefix)
+
+    for suffix in suffixes_char_to_remove:
+        txt = txt.removesuffix(suffix)
+
     txt = txt.strip()
-    if ("<no_answer>" in txt) or ("no_answer" in txt) or ("noanswer" in txt):
-        txt = "This question is not answerable."
-    if ("passage does not mention" in txt) or ("there is no mention" in txt):
-        txt = "This question is not answerable."
+
+    for indication in no_answer_indications:
+        if indication in txt:
+            txt = "This question is not answerable"
+            break
+
     return txt
 
 
@@ -275,6 +307,7 @@ def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     for metric_column, metric in metrics.items():
         if metric_column in df.columns:
             predictions = [normalize_answer(pred) for pred in df[metric_column].tolist()]
+            print(predictions)
             for idx, prediction in enumerate(predictions):
                 gold_answer = gold_answers[idx]
                 # Take max over all gold answers
@@ -303,51 +336,10 @@ def main(argv: Any) -> None:
     """Test the metrics."""
     del argv
 
-    print("no_icl")
-    files = [
-        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_0.csv",
-        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_1.csv",
-        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_2.csv",
-        "original_validation_normal_no_icl.zero_shot.squadv2_test_rank_3.csv",
-    ]
-
-    files_scores = {
-        "squadv2_metrics_f1": 0.0,
-        "squadv2_metrics_recall": 0.0,
-        "squadv2_metrics_precision": 0.0,
-        "squadv2_metrics_exact": 0.0,
-        "sentence_similarity": 0.0,
-    }
-    for file in files:
-        scores = qa_metric(f"/scratch/ssd004/scratch/snajafi/train-models/13_inference/{file}")
-        for key, value in scores.items():
-            files_scores[key] += value
-
-    for key, value in files_scores.items():
-        print(key, round(value / len(files), 4))
-
-    print("icl")
-    files = [
-        "original_validation_normal_icl.zero_shot.squadv2_test_rank_0.csv",
-        "original_validation_normal_icl.zero_shot.squadv2_test_rank_1.csv",
-        "original_validation_normal_icl.zero_shot.squadv2_test_rank_2.csv",
-        "original_validation_normal_icl.zero_shot.squadv2_test_rank_3.csv",
-    ]
-
-    files_scores = {
-        "squadv2_metrics_f1": 0.0,
-        "squadv2_metrics_recall": 0.0,
-        "squadv2_metrics_precision": 0.0,
-        "squadv2_metrics_exact": 0.0,
-        "sentence_similarity": 0.0,
-    }
-    for file in files:
-        scores = qa_metric(f"/scratch/ssd004/scratch/snajafi/train-models/13_inference/{file}")
-        for key, value in scores.items():
-            files_scores[key] += value
-
-    for key, value in files_scores.items():
-        print(key, round(value / len(files), 4))
+    print(f"prediction results for the file: {FLAGS.input_file}")
+    scores = qa_metric(FLAGS.input_file)
+    for key, value in scores.items():
+        print(key, round(value, 4))
 
 
 if __name__ == "__main__":

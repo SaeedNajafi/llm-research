@@ -9,7 +9,7 @@ from datasets import load_dataset
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("output_file", "a name", "the name of file to read data to.")
-genai.configure(api_key="AIzaSyAn3lW6YIu4acri0Ydljo_306jAA-Cuao4")
+genai.configure(api_key="")
 
 
 def main(argv: Any) -> None:
