@@ -60,7 +60,17 @@ class LLM(torch.nn.Module):
 
         # Load the pre-trained model and setup its configuration
 
-        model = load_model(FLAGS.model_path, local_rank=self.local_rank, device=torch.cuda.current_device())
+        if FLAGS.ddp:
+            self.distributed_strategy = "ddp"
+        else:
+            self.distributed_strategy = "fsdp"
+
+        model = load_model(
+            FLAGS.model_path,
+            local_rank=self.local_rank,
+            device=torch.cuda.current_device(),
+            is_fsdp=self.distributed_strategy == "fsdp",
+        )
 
         # let fsdp handle this extra module to the devices.
         model.loss_func = loss_func
@@ -96,11 +106,6 @@ class LLM(torch.nn.Module):
             model = get_lora_model_from_base_model(model)
             self.peft_config = model.peft_config
             self.is_peft_adapter_restored = model.is_peft_adapter_restored
-
-        if FLAGS.ddp:
-            self.distributed_strategy = "ddp"
-        else:
-            self.distributed_strategy = "fsdp"
 
         if self.distributed_strategy == "ddp":
             model = DDP(model, device_ids=[model.device])

@@ -127,26 +127,41 @@ def train(
                             logging.info(msg)
                         break
 
-                    # next forward / backward pass will be synced
-                    dist.barrier()
-                    loss = model.train(batch)
-                    loss = -torch.mean(loss, dim=0)
-                    loss = loss / FLAGS.gradient_accumulation_steps
-                    loss_value = loss.detach().float()
-                    train_step_loss.append(loss_value.item())
-                    train_step_perplexity.append(float(torch.exp(loss_value)))
-                    total_loss += loss_value
-
-                    # regular backpropagation when fp16 is not used
-                    loss.backward()
                     if (step + 1) % FLAGS.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
+                        # next forward / backward pass will be synced
+                        dist.barrier()
+                        loss = model.train(batch)
+                        loss = -torch.mean(loss, dim=0)
+                        loss = loss / FLAGS.gradient_accumulation_steps
+                        loss_value = loss.detach().float()
+                        train_step_loss.append(loss_value.item())
+                        train_step_perplexity.append(float(torch.exp(loss_value)))
+                        total_loss += loss_value
+
+                        # regular backpropagation when fp16 is not used
+                        loss.backward()
                         if FLAGS.gradient_clipping and FLAGS.gradient_clipping_threshold > 0.0:
                             torch.nn.utils.clip_grad_norm_(model.parameters(), FLAGS.gradient_clipping_threshold)
                         model.optimizer.step()
                         model.optimizer.zero_grad()
                         pbar.update(1)
+
+                    else:
+                        # no need to sync while accumulating gradients
+                        with model.model.no_sync():
+                            loss = model.train(batch)
+                            loss = -torch.mean(loss, dim=0)
+                            loss = loss / FLAGS.gradient_accumulation_steps
+                            loss_value = loss.detach().float()
+                            train_step_loss.append(loss_value.item())
+                            train_step_perplexity.append(float(torch.exp(loss_value)))
+                            total_loss += loss_value
+                            # regular backpropagation when fp16 is not used
+                            loss.backward()
+
                     if FLAGS.use_profiler:
                         profile_context.step()
+
                     if wandb_run:
                         if rank == 0:
                             wandb_run.log(
