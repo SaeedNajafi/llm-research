@@ -4,6 +4,7 @@
 
 ```sh
 bash job_submission/launch.sh \
+COMMAND=sbatch \
 LAUNCH_MODE=train \
 CLUSTER_NAME=vcluster \
 NNODES=1 \
@@ -22,6 +23,7 @@ CONFIG_FILE=configs/gemma2_squadv2_8192_13_lora_flags.txt
 
 ```sh
 bash job_submission/launch.sh \
+COMMAND=sbatch \
 LAUNCH_MODE=train \
 CLUSTER_NAME=narval \
 NNODES=4 \
@@ -49,6 +51,7 @@ When you launch the server, we need to give the model path and the max-log-probs
 
 ```sh
 bash job_submission/launch.sh \
+COMMAND=sbatch \
 LAUNCH_MODE=server \
 CLUSTER_NAME=narval \
 NNODES=1 \
