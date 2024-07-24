@@ -2,6 +2,7 @@
 
 import math
 import os
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List
@@ -10,6 +11,7 @@ from absl import app, flags, logging
 from numpy import mean
 from openai import OpenAI
 from openai.types.chat.chat_completion import ChatCompletion, Choice
+from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
 FLAGS = flags.FLAGS
 
@@ -82,7 +84,9 @@ class MyOpenAIClient:
             if sub_responses is not None:
                 responses.extend(sub_responses)
             else:
-                choices = [Choice(index=-1, logprobs=None, message="<API has failed!>")] * len(sub_messages)
+                choices = [Choice(index=-1, logprobs=None, message=ChatCompletionMessage(content="<API has failed!>"))] * len(
+                    sub_messages
+                )
                 responses.extend(ChatCompletion(choices=choices, id=-1, model=self.model_name, created=-1))
         return responses
 
@@ -95,7 +99,7 @@ class MyOpenAIClient:
         except Exception as e:
             if self.request_counter > 0:
                 logging.info(f"Error: {e}. Waiting {self.seconds_between_retries} seconds before retrying.")
-                time.sleep(self.seconds_between_retries)
+                time.sleep(self.seconds_between_retries + random.randint(1, 5))
                 return self.api_request(messages, **kwargs)
             else:
                 logging.info(f"Final retry ended with error: {e}.")
