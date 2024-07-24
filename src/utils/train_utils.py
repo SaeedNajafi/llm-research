@@ -141,7 +141,10 @@ def train(
                         # regular backpropagation when fp16 is not used
                         loss.backward()
                         if FLAGS.gradient_clipping and FLAGS.gradient_clipping_threshold > 0.0:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), FLAGS.gradient_clipping_threshold)
+                            if model.distributed_strategy == "fsdp":
+                                model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
+                            elif model.distributed_strategy == "ddp":
+                                torch.nn.utils.clip_grad_norm_(model.parameters(), FLAGS.gradient_clipping_threshold)
                         model.optimizer.step()
                         model.optimizer.zero_grad()
                         pbar.update(1)

@@ -42,11 +42,10 @@ export CUDA_HOME=$CONDA_PREFIX
 export NCCL_HOME=$CONDA_PREFIX
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
 
-echo "Install flash-attention and vllm-flash-attn and vllm-nccl-cu12."
+echo "Install flash-attention and vllm-flash-attn"
 
 MAX_JOBS=8 pip3 install --no-cache-dir flash-attn --no-build-isolation
 pip3 install vllm-flash-attn
-pip3 install vllm-nccl-cu12
 
 echo "Install flashinfer for vllm and gemma2 models."
 pip3 install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.3
