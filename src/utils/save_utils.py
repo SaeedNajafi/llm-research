@@ -3,7 +3,6 @@ import os
 import re
 from typing import Any, Dict, List, Tuple
 
-import peft
 import torch
 import torch.distributed as dist
 from absl import flags, logging
@@ -121,34 +120,11 @@ def get_latest_checkpoint_dir(folder_path: str) -> str:
         return epoch_folder
 
 
-def save_consolidated_model(model: nn.Module, save_dir: str, rank: int) -> None:
-    """Save the sharded model's parameters consolidated under a single file.
-
-    Args:
-    ----
-        model: The sharded model.
-        save_dir: The checkpointing directory.
-        rank: The worker's rank.
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "model.bin")
-    if model.distributed_strategy == "ddp":
-        state_dict = model.state_dict()
-        if rank == 0:
-            torch.save(state_dict, save_path)
-    elif model.distributed_strategy == "fsdp":
-        cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
-            state_dict = model.state_dict()
-            if rank == 0:
-                torch.save(state_dict, save_path)
-
-
-def save_peft_adapter(model: peft.peft_model.PeftModel, output_path: str, distributed_strategy: str) -> None:
+def save_peft_adapter(model: Any, output_path: str, distributed_strategy: str) -> None:
     """Save peft adapter to filesystem in a FSDP environment."""
     if distributed_strategy == "ddp":
         if dist.get_rank() == 0:
-            model.save_pretrained(output_path)
+            model.module.save_pretrained(output_path)
     elif distributed_strategy == "fsdp":
         with FSDP.state_dict_type(
             model,
@@ -184,25 +160,25 @@ def save_model_and_optimizer(
         if rank == 0:
             full_state = {"optim_state": optimizer.state_dict()}
             if include_model_state:
-                full_state["model_state"] = model.model.state_dict()
+                full_state["model_state"] = model.model.module.state_dict()
             torch.save(full_state, save_path)
             logging.info(f"States saved to {save_path}.")
 
     elif model.distributed_strategy == "fsdp":
         opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
         with FSDP.state_dict_type(
-            model,
+            model.model,
             StateDictType.SHARDED_STATE_DICT,
             optim_state_dict_config=opt_cfg,
         ):
-            state_dict = model.state_dict()
-            opt_state = FSDP.sharded_optim_state_dict(model, optimizer)
+            state_dict = model.model.state_dict()
+            opt_state = FSDP.sharded_optim_state_dict(model.model, optimizer)
             full_state = {"optim_state": opt_state}
             if include_model_state:
                 full_state["model_state"] = state_dict
 
         writer = FileSystemWriter(output_dir, single_file_per_rank=True)
-        if _should_save(rank, model.sharding_strategy):
+        if _should_save(rank, model.model.sharding_strategy):
             if rank == 0:
                 logging.info(f"Saving states to {output_dir}.")
             save(
@@ -242,7 +218,7 @@ def load_model_and_optimizer(
         input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
         if not optimizer_only:
-            model.load_state_dict(state_dict["model_state"])
+            model.module.load_state_dict(state_dict["model_state"])
         optimizer.load_state_dict(state_dict["optim_state"])
 
     elif distributed_strategy == "fsdp":

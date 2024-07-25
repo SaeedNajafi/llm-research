@@ -109,14 +109,17 @@ class LLM(torch.nn.Module):
 
         if self.distributed_strategy == "ddp":
             model = DDP(model, device_ids=[model.device])
-            self.model = model.module
+            self.model = model
+            self.model.loss_func = self.model.module.loss_func
+            self.model.device = self.model.module.device
+
         elif self.distributed_strategy == "fsdp":
             decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
             assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
             model = shard_model(model, decoder_layer_module, local_rank=local_rank)
             self.model = model
 
-        self.device = model.device
+        self.device = self.model.device
         self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=FLAGS.t_0, eta_min=FLAGS.lr_min)
 
@@ -167,13 +170,19 @@ class LLM(torch.nn.Module):
         """For each iteration of prediction over batch, clear gpu cache, turn
         on eval mode."""
         clear_gpu_cache()
-        self.model.eval()
+        if self.distributed_strategy == "ddp":
+            self.model.module.eval()
+        elif self.distributed_strategy == "fsdp":
+            self.model.eval()
 
     def train_mode_on(self) -> None:
         """Before every forward-backward iteration over batch, clear gpu cache,
         turn on train mode!"""
         clear_gpu_cache()
-        self.model.train()
+        if self.distributed_strategy == "ddp":
+            self.model.module.train()
+        elif self.distributed_strategy == "fsdp":
+            self.model.train()
 
     def data_to_device(self, batch: torch.utils.data.Dataset, keys: List[str]) -> Dict[str, torch.Tensor]:
         """Move the batch tensors specified by keys into the gpu and return a
@@ -217,21 +226,38 @@ class LLM(torch.nn.Module):
         input_ids = loaded_batch["lm_input_ids_for_generation"]
         attention_mask = loaded_batch["lm_attention_mask_for_generation"]
         with torch.no_grad():
-            predictions_output = self.model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                do_sample=True,
-                top_p=FLAGS.top_p,
-                temperature=FLAGS.temperature,
-                max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                num_return_sequences=1,
-                output_logits=True,
-                return_dict_in_generate=True,
-                use_cache=True,
-                renormalize_logits=True,
-                eos_token_id=self.terminators,
-                pad_token_id=self.tokenizer.pad_token_id,
-            )
+            if self.distributed_strategy == "fsdp":
+                predictions_output = self.model.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    do_sample=True,
+                    top_p=FLAGS.top_p,
+                    temperature=FLAGS.temperature,
+                    max_length=FLAGS.input_max_length + FLAGS.output_max_length,
+                    num_return_sequences=1,
+                    output_logits=True,
+                    return_dict_in_generate=True,
+                    use_cache=True,
+                    renormalize_logits=True,
+                    eos_token_id=self.terminators,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
+            elif self.distributed_strategy == "ddp":
+                predictions_output = self.model.module.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    do_sample=True,
+                    top_p=FLAGS.top_p,
+                    temperature=FLAGS.temperature,
+                    max_length=FLAGS.input_max_length + FLAGS.output_max_length,
+                    num_return_sequences=1,
+                    output_logits=True,
+                    return_dict_in_generate=True,
+                    use_cache=True,
+                    renormalize_logits=True,
+                    eos_token_id=self.terminators,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                )
 
         prompt_len = input_ids.size()[1]
         selected_samples = predictions_output.sequences[:, prompt_len:]

@@ -1,7 +1,7 @@
 --dev_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
 --train_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-train.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/llama3/0.1_13_lora_rank_512
---prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/llama3/0.1_13_lora_rank_512/internal_validation_prediction_squadv2.csv
+--checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/gemma/squadv2/0.1_13_ddp_all
+--prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints/squadv2/gemma/squadv2/0.1_13_ddp_all/internal_validation_prediction_squadv2.csv
 --r=512
 --lora_alpha=512
 --lora_dropout=0.3

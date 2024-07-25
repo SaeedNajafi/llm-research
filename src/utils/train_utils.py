@@ -142,9 +142,9 @@ def train(
                         loss.backward()
                         if FLAGS.gradient_clipping and FLAGS.gradient_clipping_threshold > 0.0:
                             if model.distributed_strategy == "fsdp":
-                                model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
+                                model.model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
                             elif model.distributed_strategy == "ddp":
-                                torch.nn.utils.clip_grad_norm_(model.parameters(), FLAGS.gradient_clipping_threshold)
+                                torch.nn.utils.clip_grad_norm_(model.model.parameters(), FLAGS.gradient_clipping_threshold)
                         model.optimizer.step()
                         model.optimizer.zero_grad()
                         pbar.update(1)
@@ -388,7 +388,8 @@ def evaluation(
                 # stop when the maximum number of eval steps is reached
                 if FLAGS.max_eval_step > 0 and total_eval_steps > FLAGS.max_eval_step:
                     if rank == 0:
-                        logging.info("max eval steps reached, stopping evaluation, total_eval_steps: ", total_eval_steps - 1)
+                        msg = f"max eval steps reached, stopping evaluation, total_eval_steps: {total_eval_steps - 1}"
+                        logging.info(msg)
                     break
 
                 for ret_row, ret_loss in model.predict(batch):
@@ -468,11 +469,3 @@ def setup_environ_flags(rank: int) -> None:
 def cleanup() -> None:
     """Clean up the process group after training."""
     dist.destroy_process_group()
-
-
-def get_parameter_dtypes(model: torch.nn.Module) -> Dict[str, torch.dtype]:
-    """Get the data types of model parameters."""
-    parameter_dtypes = {}
-    for name, parameter in model.named_parameters():
-        parameter_dtypes[name] = parameter.dtype
-    return parameter_dtypes

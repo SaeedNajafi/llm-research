@@ -307,7 +307,6 @@ def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     for metric_column, metric in metrics.items():
         if metric_column in df.columns:
             predictions = [normalize_answer(pred) for pred in df[metric_column].tolist()]
-            print(predictions)
             for idx, prediction in enumerate(predictions):
                 gold_answer = gold_answers[idx]
                 # Take max over all gold answers
