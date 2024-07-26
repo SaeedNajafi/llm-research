@@ -6,6 +6,7 @@ import torch
 from absl import flags, logging
 from bitsandbytes.optim.adamw import AdamW8bit
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from transformers import AutoTokenizer
 
@@ -128,7 +129,11 @@ class LLM(torch.nn.Module):
             self.model = model
 
         self.device = self.model.device
-        self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
+        if self.distributed_strategy == "ddp":
+            self.optimizer = AdamW8bit(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
+        elif self.distributed_strategy == "fsdp":
+            self.optimizer = AdamW(self.model.parameters(), lr=FLAGS.lr, weight_decay=FLAGS.weight_decay)
+
         self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=FLAGS.t_0, eta_min=FLAGS.lr_min)
 
     def prepare_text_for_inference(
