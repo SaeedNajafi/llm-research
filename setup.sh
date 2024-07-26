@@ -12,16 +12,16 @@ eval "$(conda shell.bash hook)"
 conda activate ${ENV_NAME}
 
 echo "Installing git."
-conda install -c anaconda git
+conda install -c anaconda git -y
 
 echo "Installing git-lfs."
-conda install conda-forge::git-lfs
+conda install conda-forge::git-lfs -y
 
 echo "Installing rust."
-conda install conda-forge::rust
+conda install conda-forge::rust -y
 
 echo "Installing cuda-nvcc."
-CONDA_OVERRIDE_CUDA="12.1" conda install nvidia/label/cuda-12.2.1::cuda-nvcc
+CONDA_OVERRIDE_CUDA="11.8" conda install nvidia/label/cuda-12.2.1::cuda-nvcc -y
 
 # Get rid of cluster python.
 module --force purge
@@ -47,3 +47,7 @@ pip3 install vllm ray llvmlite vllm-flash-attn
 
 echo "Install flashinfer for vllm and gemma2 models."
 pip3 install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.3
+
+echo "Fix sqlite"
+conda remove sqlite -y
+conda install sqlite -y

@@ -7,12 +7,9 @@ import torch
 import torch.distributed as dist
 from absl import flags, logging
 from torch import nn
-
-# general model non-sharded, non-flattened params
-from torch.distributed.fsdp import FullOptimStateDictConfig  # general model non-sharded, non-flattened params
-from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
+from torch.distributed.fsdp import FullOptimStateDictConfig, FullStateDictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import ShardingStrategy, StateDictType  # general model non-sharded, non-flattened params
+from torch.distributed.fsdp import StateDictType
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -163,20 +160,20 @@ def save_model_and_optimizer(
             logging.info(f"States saved to {save_path}.")
 
     elif model.distributed_strategy == "fsdp":
-        FSDP.set_state_dict_type(
+        with FSDP.state_dict_type(
             model.model,
             StateDictType.FULL_STATE_DICT,
             FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
             FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True),
-        )
-        state_dict = model.model.state_dict()
-        opt_state = FSDP.optim_state_dict(model.model, optimizer)
-        full_state = {"optim_state": opt_state}
-        if include_model_state:
-            full_state["model_state"] = state_dict
-        if rank == 0:
-            torch.save(full_state, output_dir)
-            logging.info(f"States saved to {output_dir}.")
+        ):
+            state_dict = model.model.state_dict()
+            opt_state = FSDP.optim_state_dict(model.model, optimizer)
+            full_state = {"optim_state": opt_state}
+            if include_model_state:
+                full_state["model_state"] = state_dict
+            if rank == 0:
+                torch.save(full_state, save_path)
+                logging.info(f"States saved to {save_path}.")
 
 
 def load_model_and_optimizer(
@@ -213,16 +210,16 @@ def load_model_and_optimizer(
         map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
         input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
-        FSDP.set_state_dict_type(
+        with FSDP.state_dict_type(
             model,
             StateDictType.FULL_STATE_DICT,
             FullStateDictConfig(rank0_only=False),
             FullOptimStateDictConfig(rank0_only=False),
-        )
-        if not optimizer_only:
-            model.load_state_dict(state_dict["model_state"])
-        optim_state_dict = FSDP.optim_state_dict_to_load(model, optimizer, state_dict["optim_state"])
-        optimizer.load_state_dict(optim_state_dict)
+        ):
+            if not optimizer_only:
+                model.load_state_dict(state_dict["model_state"])
+            optim_state_dict = FSDP.optim_state_dict_to_load(model, optimizer, state_dict["optim_state"])
+            optimizer.load_state_dict(optim_state_dict)
 
     if dist.get_rank() == 0:
         logging.info(f"States loaded from {input_dir}.")
@@ -271,6 +268,7 @@ def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distribute
         scheduler.load_state_dict(state_dict)
         if rank == 0:
             logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
+
     elif distributed_strategy == "fsdp":
         sched_name = "scheduler.bin"
         input_scheduler_file = os.path.join(input_dir, sched_name)
@@ -280,27 +278,6 @@ def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distribute
         scheduler.load_state_dict(state_dict)
         if rank == 0:
             logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
-
-
-def _should_save(rank: int, strategy: ShardingStrategy) -> bool:
-    """Whether we should save on this rank.
-
-    In HSDP, we only save on one of the shard_group
-    (i.e. non-replicated ranks).
-
-    Args:
-    ----
-        rank: The global rank.
-        strategy: The sharding strategy for FSDP.
-
-    Returns:
-    -------
-        Whether we should save on this rank.
-    """
-    if strategy == ShardingStrategy.HYBRID_SHARD:
-        local_rank = int(os.environ["LOCAL_RANK"])
-        return local_rank == rank
-    return True
 
 
 def save_checkpoint(model: Any, step: int, epoch: int) -> None:

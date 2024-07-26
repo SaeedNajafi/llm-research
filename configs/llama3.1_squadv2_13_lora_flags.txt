@@ -1,13 +1,13 @@
---dev_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
---train_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-train.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints-july-25/squadv2/llama3.1-8b-it-lora-rank16-ddp
---prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints-july-25/squadv2/llama3.1-8b-it-lora-rank16-ddp/internal_validation_prediction_squadv2.csv
+--dev_file=/home/ubuntu/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
+--train_file=/home/ubuntu/llm-research/data/0.1-shot-datasets/squad/0.1-13-train.tsv
+--checkpoint_folder=/home/ubuntu/tmp-dir
+--prediction_file=/home/ubuntu/tmp-dir/internal_validation_prediction_squadv2.csv
 --r=512
 --lora_alpha=512
 --lora_dropout=0.3
 --target_modules=q_proj,v_proj,o_proj,k_proj
 --use_peft=false
---low_cpu_mem_usage
+--low_cpu_mem_usage=false
 --use_mp
 --attn_implementation=flash_attention_2
 --use_activation_checkpointing
@@ -22,7 +22,7 @@
 --gradient_clipping_threshold=1.0
 --run_validation
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/Meta-Llama-3.1-8B-Instruct
+--model_path=meta-llama/Meta-Llama-3.1-8B-Instruct
 --llm_name=llama3.1
 --t_0=1
 --top_p=0.9

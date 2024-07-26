@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 import torch
 from absl import flags, logging
 from bitsandbytes.optim.adamw import AdamW8bit
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
@@ -242,23 +243,24 @@ class LLM(torch.nn.Module):
             if self.distributed_strategy == "fsdp":
                 # these weird line is necessary
                 # https://github.com/pytorch/pytorch/issues/100069
-                with torch.no_grad():
-                    self.model.forward(input_ids=input_ids)
-                predictions_output = self.model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    do_sample=True,
-                    top_p=FLAGS.top_p,
-                    temperature=FLAGS.temperature,
-                    max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                    num_return_sequences=1,
-                    output_logits=True,
-                    return_dict_in_generate=True,
-                    use_cache=True,
-                    renormalize_logits=True,
-                    eos_token_id=self.terminators,
-                    pad_token_id=self.tokenizer.pad_token_id,
-                )
+                # with torch.no_grad():
+                #    self.model.forward(input_ids=input_ids)
+                with FSDP.summon_full_params(self.model, writeback=False, recurse=False):
+                    predictions_output = self.model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        do_sample=True,
+                        top_p=FLAGS.top_p,
+                        temperature=FLAGS.temperature,
+                        max_length=FLAGS.input_max_length + FLAGS.output_max_length,
+                        num_return_sequences=1,
+                        output_logits=True,
+                        return_dict_in_generate=True,
+                        use_cache=True,
+                        renormalize_logits=True,
+                        eos_token_id=self.terminators,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                    )
             elif self.distributed_strategy == "ddp":
                 predictions_output = self.model.module.generate(
                     input_ids=input_ids,
@@ -331,7 +333,7 @@ class Llama31QA(LLM):
         self.output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|eot_id|>"
 
         # required for llama3.1
-        self.terminators = [128001, 128008, 128009]
+        self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
 
 class Gemma2QA(LLM):
