@@ -7,14 +7,12 @@ import torch
 import torch.distributed as dist
 from absl import flags, logging
 from torch import nn
-from torch.distributed.checkpoint import DefaultLoadPlanner, DefaultSavePlanner, FileSystemReader, FileSystemWriter, load, save
-from torch.distributed.checkpoint.optimizer import load_sharded_optimizer_state_dict
 
 # general model non-sharded, non-flattened params
+from torch.distributed.fsdp import FullOptimStateDictConfig  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import ShardingStrategy, StateDictType  # general model non-sharded, non-flattened params
-from torch.distributed.fsdp.api import ShardedOptimStateDictConfig
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
@@ -165,30 +163,20 @@ def save_model_and_optimizer(
             logging.info(f"States saved to {save_path}.")
 
     elif model.distributed_strategy == "fsdp":
-        opt_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
-        with FSDP.state_dict_type(
+        FSDP.set_state_dict_type(
             model.model,
-            StateDictType.SHARDED_STATE_DICT,
-            optim_state_dict_config=opt_cfg,
-        ):
-            state_dict = model.model.state_dict()
-            opt_state = FSDP.sharded_optim_state_dict(model.model, optimizer)
-            full_state = {"optim_state": opt_state}
-            if include_model_state:
-                full_state["model_state"] = state_dict
-
-        writer = FileSystemWriter(output_dir, single_file_per_rank=True)
-        if _should_save(rank, model.model.sharding_strategy):
-            if rank == 0:
-                logging.info(f"Saving states to {output_dir}.")
-            save(
-                state_dict=full_state,
-                storage_writer=writer,
-                process_group=model.process_group,
-                planner=DefaultSavePlanner(),
-            )
-            if rank == 0:
-                logging.info(f"States saved to {output_dir}.")
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(rank0_only=True, offload_to_cpu=True),
+            FullOptimStateDictConfig(rank0_only=True, offload_to_cpu=True),
+        )
+        state_dict = model.model.state_dict()
+        opt_state = FSDP.optim_state_dict(model.model, optimizer)
+        full_state = {"optim_state": opt_state}
+        if include_model_state:
+            full_state["model_state"] = state_dict
+        if rank == 0:
+            torch.save(full_state, output_dir)
+            logging.info(f"States saved to {output_dir}.")
 
 
 def load_model_and_optimizer(
@@ -222,28 +210,19 @@ def load_model_and_optimizer(
         optimizer.load_state_dict(state_dict["optim_state"])
 
     elif distributed_strategy == "fsdp":
-        with FSDP.state_dict_type(model, StateDictType.SHARDED_STATE_DICT):
-            model_state_dict = model.state_dict()
-            checkpoint = {"model_state": model_state_dict}
-            if not optimizer_only:
-                load(
-                    state_dict=checkpoint,
-                    storage_reader=FileSystemReader(input_dir),
-                    planner=DefaultLoadPlanner(),
-                )
-                model.load_state_dict(checkpoint["model_state"])
-
-            optim_state = load_sharded_optimizer_state_dict(
-                model_state_dict=model.state_dict(),
-                optimizer_key="optim_state",
-                storage_reader=FileSystemReader(input_dir),
-            )
-            flattened_osd = FSDP.optim_state_dict_to_load(
-                model,
-                optimizer,
-                optim_state["optim_state"],
-            )
-            optimizer.load_state_dict(flattened_osd)
+        map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        input_dir = os.path.join(input_dir, "model_optim.bin")
+        state_dict = torch.load(input_dir, map_location=map_location)
+        FSDP.set_state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(rank0_only=False),
+            FullOptimStateDictConfig(rank0_only=False),
+        )
+        if not optimizer_only:
+            model.load_state_dict(state_dict["model_state"])
+        optim_state_dict = FSDP.optim_state_dict_to_load(model, optimizer, state_dict["optim_state"])
+        optimizer.load_state_dict(optim_state_dict)
 
     if dist.get_rank() == 0:
         logging.info(f"States loaded from {input_dir}.")

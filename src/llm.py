@@ -48,6 +48,7 @@ _LLAMA31_EXTRA_TOKENS = {
     "pad_token": "<|finetune_right_pad_id|>",
 }
 
+
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
 
@@ -106,6 +107,8 @@ class LLM(torch.nn.Module):
 
         print_model_size(model, FLAGS.model_path, self.rank)
 
+        # Required while loading non-peft methods.
+        self.is_peft_adapter_restored = False
         if FLAGS.use_peft:
             # Load the pre-trained peft model checkpoint and setup its configuration
             model = get_lora_model_from_base_model(model)
@@ -122,11 +125,6 @@ class LLM(torch.nn.Module):
             decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
             assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
             model = shard_model(model, decoder_layer_module, local_rank=local_rank)
-
-            # Trigger FSDP initialization before retrieving weights.
-            # Otherwise FSDP is_root flag might be set incorrectly.
-            model(input_ids=torch.zeros((1, 1), dtype=torch.int))
-
             self.model = model
 
         self.device = self.model.device
@@ -237,6 +235,10 @@ class LLM(torch.nn.Module):
         attention_mask = loaded_batch["lm_attention_mask_for_generation"]
         with torch.no_grad():
             if self.distributed_strategy == "fsdp":
+                # these weird line is necessary
+                # https://github.com/pytorch/pytorch/issues/100069
+                with torch.no_grad():
+                    self.model.forward(input_ids=input_ids)
                 predictions_output = self.model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -311,8 +313,9 @@ class Llama3QA(LLM):
         # required for llama3.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
+
 class Llama31QA(LLM):
-    """Class to implement Llama3.1"""
+    """Class to implement Llama3.1."""
 
     def __init__(self, local_rank: int = 0, rank: int = 0) -> None:
         super().__init__(_LLAMA31_EXTRA_TOKENS, local_rank, rank)

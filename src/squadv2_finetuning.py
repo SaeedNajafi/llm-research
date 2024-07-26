@@ -10,6 +10,9 @@ from typing import Any
 import torch
 import wandb
 from absl import app, flags
+from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
+from torch.distributed.fsdp import StateDictType  # general model non-sharded, non-flattened params
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from src.llm import Gemma2QA, Llama3QA, Llama31QA
 from src.metrics import qa_metric_squadv2_metrics
@@ -134,22 +137,29 @@ def main(argv: Any) -> None:
         # load the rest of the model weights if not peft.
         _, _ = find_checkpoint(model)
 
-        deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
-        os.makedirs(deploy_dir, exist_ok=True)
-        model.tokenizer.save_pretrained(deploy_dir)
-        if FLAGS.use_peft:
-            if model.distributed_strategy == "ddp":
-                # merge lora to the base model.
-                merged_model = model.model.module.merge_and_unload()
-            elif model.distributed_strategy == "fsdp":
-                # merge lora to the base model.
-                merged_model = model.model.merge_and_unload()
-        else:
-            if model.distributed_strategy == "ddp":
-                merged_model = model.model.module
-            elif model.distributed_strategy == "fsdp":
-                merged_model = model.model
-        merged_model.save_pretrained(deploy_dir, safe_serialization=False)
+        if rank == 0:
+            deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
+            os.makedirs(deploy_dir, exist_ok=True)
+            model.tokenizer.save_pretrained(deploy_dir)
+            if FLAGS.use_peft:
+                if model.distributed_strategy == "ddp":
+                    # merge lora to the base model.
+                    merged_model = model.model.module.merge_and_unload()
+                elif model.distributed_strategy == "fsdp":
+                    # merge lora to the base model.
+                    merged_model = model.model.merge_and_unload()
+            else:
+                if model.distributed_strategy == "ddp":
+                    merged_model = model.model.module
+                    merged_model.save_pretrained(deploy_dir, safe_serialization=False)
+                elif model.distributed_strategy == "fsdp":
+                    merged_model = model.model
+                    with FSDP.state_dict_type(
+                        merged_model,
+                        StateDictType.FULL_STATE_DICT,
+                        FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
+                    ):
+                        merged_model.save_pretrained(deploy_dir, safe_serialization=False)
 
 
 if __name__ == "__main__":

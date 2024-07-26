@@ -142,18 +142,10 @@ def load_model(
         )
     else:
         # for fsdp
-        if not FLAGS.low_cpu_mem_usage or local_rank == 0:
-            model = AutoModelForCausalLM.from_pretrained(
-                path,
-                **model_args,
-            )
-        else:
-            with torch.device("meta"):
-                model = AutoModelForCausalLM.from_pretrained(
-                    path,
-                    **model_args,
-                )
-
+        model = AutoModelForCausalLM.from_pretrained(
+            path,
+            **model_args,
+        )
     return model
 
 
