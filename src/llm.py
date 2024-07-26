@@ -42,6 +42,11 @@ _LLAMA3_EXTRA_TOKENS = {
     "pad_token": "<|reserved_special_token_0|>",
 }
 
+# Make sure we have some tokens defined for the LM, if not defined in the model.
+# Specific for Llama3.1
+_LLAMA31_EXTRA_TOKENS = {
+    "pad_token": "<|finetune_right_pad_id|>",
+}
 
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
@@ -117,6 +122,11 @@ class LLM(torch.nn.Module):
             decoder_layer_module = get_submodule_by_pattern(model, r"DecoderLayer$")
             assert decoder_layer_module is not None, f"No DecoderLayer found in {model}"
             model = shard_model(model, decoder_layer_module, local_rank=local_rank)
+
+            # Trigger FSDP initialization before retrieving weights.
+            # Otherwise FSDP is_root flag might be set incorrectly.
+            model(input_ids=torch.zeros((1, 1), dtype=torch.int))
+
             self.model = model
 
         self.device = self.model.device
@@ -300,6 +310,20 @@ class Llama3QA(LLM):
 
         # required for llama3.
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
+
+class Llama31QA(LLM):
+    """Class to implement Llama3.1"""
+
+    def __init__(self, local_rank: int = 0, rank: int = 0) -> None:
+        super().__init__(_LLAMA31_EXTRA_TOKENS, local_rank, rank)
+
+        # Chat templates for llama3.1.
+        self.instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
+        self.input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
+        self.output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|eot_id|>"
+
+        # required for llama3.1
+        self.terminators = [128001, 128008, 128009]
 
 
 class Gemma2QA(LLM):

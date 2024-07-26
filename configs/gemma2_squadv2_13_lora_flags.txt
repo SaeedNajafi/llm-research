@@ -9,7 +9,7 @@
 --use_peft=false
 --low_cpu_mem_usage
 --use_mp
---attn_implementation=eager
+--attn_implementation=flash_attention_2
 --use_activation_checkpointing
 --sharding_strategy=FULL_SHARD
 --use_profiler=false
@@ -22,8 +22,8 @@
 --gradient_clipping_threshold=1.0
 --run_validation
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/gemma-2b-it
---llm_name=gemma2
+--model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/Meta-Llama-3-8B-Instruct
+--llm_name=llama3
 --t_0=1
 --top_p=0.9
 --temperature=0.001
@@ -38,5 +38,4 @@
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=4
---ddp
---enable_nf4
+--ddp=false

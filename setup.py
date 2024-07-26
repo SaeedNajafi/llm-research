@@ -31,10 +31,7 @@ INSTALL_REQUIRES = [
     "wheel",
     "setuptools",
     "tensorrt",
-    "triton",
-    "vllm",
-    "ray",
-    "llvmlite",
+    "triton"
 ]
 
 DEV_REQUIRES = [
