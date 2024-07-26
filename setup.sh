@@ -21,7 +21,7 @@ echo "Installing rust."
 conda install conda-forge::rust -y
 
 echo "Installing cuda-nvcc."
-CONDA_OVERRIDE_CUDA="11.8" conda install nvidia/label/cuda-12.2.1::cuda-nvcc -y
+conda install nvidia/label/cuda-12.2.1::cuda-nvcc -y
 
 # Get rid of cluster python.
 module --force purge
