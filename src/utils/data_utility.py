@@ -106,7 +106,7 @@ def process_squadv2_dataset(
         elif experiment_type == "explanation_no_icl":
             user_final_message = f"Passage: {context}"
             user_final_message += f"\nQuestion: {question}"
-            user_final_message += "\nExplanations and Thought Process and Final Answer: "
+            user_final_message += "\nExplanations and Thought Process and Final Answer: Let's think step by step."
 
         formed_input = input_template.format(input=user_final_message)
         squad_input = f"{formed_instruction}{formed_input}"

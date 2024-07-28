@@ -178,7 +178,7 @@ Reasoning: Therefore, there is no mention of "play" or any game-related concepts
 explanation_instruction = """This task is about writing a correct answer for the reading comprehension task.\
     Based on the information provided in a given passage, you should identify the shortest continuous text span\
         from the passage that serves as an answer to the given question. Avoid answers that are incorrect\
-            or have incomplete justification. Generate your explanations and thought process before\
+            or have incomplete justification. Describe your explanations and thought process before\
                 generating the final answer. If you cannot find the answer from the passage for the given\
                     question, then generate the <no_answer> tag as the final answer."""
 normal_instruction = """This task is about writing a correct answer for the reading comprehension task.\
