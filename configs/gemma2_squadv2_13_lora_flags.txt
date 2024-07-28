@@ -1,9 +1,9 @@
 --dev_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
 --train_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-train.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints-july-25/squadv2/gemma2-9b-it-lora-rank128-ddp
---prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints-july-25/squadv2/gemma2-9b-it-lora-rank128-ddp/internal_validation_prediction_squadv2.csv
---r=128
---lora_alpha=128
+--checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints-july-25/squadv2/gemma2-9b-it-lora-rank32-ddp
+--prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/checkpoints-july-25/squadv2/gemma2-9b-it-lora-rank32-ddp/internal_validation_prediction_squadv2.csv
+--r=32
+--lora_alpha=32
 --lora_dropout=0.2
 --target_modules=q_proj,v_proj,o_proj,k_proj
 --use_peft
@@ -16,8 +16,8 @@
 --max_train_step=0
 --max_eval_step=0
 --num_epochs=3
---steps_before_evaluation=2048
---gradient_accumulation_steps=16
+--steps_before_evaluation=1024
+--gradient_accumulation_steps=8
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation
