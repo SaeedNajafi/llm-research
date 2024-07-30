@@ -161,30 +161,24 @@ def lower(text: str) -> str:
 
 
 prefixes_txt_to_remove = [
-    "assistant\n\n",
-    "Here are the answers based on the provided passages:",
-    "**",
-    "The shortest continuous text span from the passage that serves as an answer to the given question is:\n\n",
-    "The shortest continuous text span from the passage that serves as an answer to the question is:\n\n",
-    "The shortest continuous text span that serves as an answer to the given question is:",
-    "Based on the passage, the correct answer is",
-    "The correct answer is",
-    "According to the passage,",
-    "Here is the answer:",
+    "assistant",
+    "here are the answers based on the provided passages:",
+    "the shortest continuous text span from the passage that serves as an answer to the given question is:",
+    "the shortest continuous text span from the passage that serves as an answer to the question is:",
+    "the shortest continuous text span that serves as an answer to the given question is:",
+    "based on the passage, the correct answer is",
+    "the correct answer is",
+    "according to the passage,",
+    "here is the answer:",
     "the correct answer is",
 ]
 
-prefixes_char_to_remove = ["<s>", "\n", ".", ":", "answer:", ","]
-
-suffixes_char_to_remove = ["</s>", "\n", ".", "*"]
-
 replace_with_space = [
-    "final answer11",
     "final answer",
-    "Final Answer_11:" "from passage it can be inferred that",
-    "\n",
-    "*",
-    "Let me know if you have any other passages you'd like me to analyze!",
+    "from passage it can be inferred that",
+    "from the passage it can be inferred that",
+    "let me know if you have any other passages you'd like me to analyze",
+    "let me know if you have any other passages you would like me to analyze",
 ]
 
 no_answer_indications = [
@@ -193,45 +187,41 @@ no_answer_indications = [
     "noanswer",
     "passage does not mention",
     "there is no mention",
+    "there is no information",
+    "passage does not include",
+    "not explicitly mentioned in passage",
+    "passage does not provide",
+    "passage does not specify",
+    "there is no specific information",
+    "is not mentioned in passage",
+    "passage does not indicate",
+    "none are mentioned in passage",
 ]
 
 
 def postprocess_qa(txt: str) -> str:
     txt = str(txt)
-    txt = txt.replace("*", "")
+    txt = txt.lower()
+
+    for indication in no_answer_indications:
+        if indication in txt:
+            txt = "this question is not answerable"
+            return txt
 
     for prefix in prefixes_txt_to_remove:
         txt = txt.removeprefix(prefix)
 
     try:
-        txt = txt.split("Final Answer:")[1]
+        txt = txt.split("final answer:")[1]
     except Exception:
         try:
-            txt = txt.split("Answer:")[1]
+            txt = txt.split("answer:")[1]
         except Exception:
-            try:
-                txt = txt.split("Final Answer_11:")[1]
-            except Exception:
-                pass
-
-    txt = txt.lower()
+            pass
 
     for to_replace in replace_with_space:
         txt = txt.replace(to_replace, "")
-
-    for prefix in prefixes_char_to_remove:
-        txt = txt.removeprefix(prefix)
-
-    for suffix in suffixes_char_to_remove:
-        txt = txt.removesuffix(suffix)
-
     txt = txt.strip()
-
-    for indication in no_answer_indications:
-        if indication in txt:
-            txt = "This question is not answerable"
-            break
-
     return txt
 
 
@@ -307,6 +297,13 @@ def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     for metric_column, metric in metrics.items():
         if metric_column in df.columns:
             predictions = [normalize_answer(pred) for pred in df[metric_column].tolist()]
+            orig_preds = df[metric_column].tolist()
+            for idx, pred in enumerate(predictions):
+                print("###")
+                print(pred)
+                print("<>\n")
+                print(orig_preds[idx])
+                print("####")
             for idx, prediction in enumerate(predictions):
                 gold_answer = gold_answers[idx]
                 # Take max over all gold answers

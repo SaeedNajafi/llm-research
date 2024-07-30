@@ -156,6 +156,8 @@ class LLM(torch.nn.Module):
         }
         if gold_answers is not None:
             data["gold_answers"] = gold_answers
+
+        print(max([len(each) for each in data["lm_input_ids_for_generation"]]))
         return data
 
     def prepare_text_for_train(self, texts: List[str], output_texts: List[str], row_ids: List[str]) -> Dict[str, Any]:
@@ -343,8 +345,8 @@ class Gemma2QA(LLM):
         super().__init__(None, local_rank, rank)
 
         # Chat templates for gemma2.
-        self.instruction_template = "<bos><start_of_turn>user\n{instruction}"
-        self.input_template = "\n{input}<end_of_turn>\n<start_of_turn>model"
+        self.instruction_template = "<bos><start_of_turn>user\n{instruction}<end_of_turn>"
+        self.input_template = "\n<start_of_turn>user\n{input}<end_of_turn>\n<start_of_turn>model"
         self.output_template = "\n{output} <end_of_turn>"
 
         # required for gemma2.
