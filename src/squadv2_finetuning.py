@@ -136,31 +136,26 @@ def main(argv: Any) -> None:
     elif FLAGS.mode == "deploy":
         # load the rest of the model weights if not peft.
         _, _ = find_checkpoint(model)
-
         if rank == 0:
             deploy_dir = os.path.join(FLAGS.checkpoint_folder, "final_model")
             os.makedirs(deploy_dir, exist_ok=True)
             model.tokenizer.save_pretrained(deploy_dir)
-            if FLAGS.use_peft:
-                if model.distributed_strategy == "ddp":
-                    # merge lora to the base model.
-                    merged_model = model.model.module.merge_and_unload()
-                elif model.distributed_strategy == "fsdp":
-                    # merge lora to the base model.
-                    merged_model = model.model.merge_and_unload()
-            else:
-                if model.distributed_strategy == "ddp":
-                    merged_model = model.model.module
-                    merged_model.save_pretrained(deploy_dir, safe_serialization=False)
-                elif model.distributed_strategy == "fsdp":
-                    merged_model = model.model
-                    with FSDP.state_dict_type(
-                        merged_model,
-                        StateDictType.FULL_STATE_DICT,
-                        FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
-                    ):
-                        merged_model.save_pretrained(deploy_dir, safe_serialization=False)
+            if model.distributed_strategy == "ddp":
+                # merge lora to the base model.
+                merged_model = model.model.module.merge_and_unload() if FLAGS.use_peft else model.model.module
+            elif model.distributed_strategy == "fsdp":
+                # merge lora to the base model.
+                merged_model = model.model.merge_and_unload() if FLAGS.use_peft else model.model
 
+            if model.distributed_strategy == "ddp":
+                merged_model.save_pretrained(deploy_dir, safe_serialization=False)
+            elif model.distributed_strategy == "fsdp":
+                with FSDP.state_dict_type(
+                    merged_model,
+                    StateDictType.FULL_STATE_DICT,
+                    FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
+                ):
+                    merged_model.save_pretrained(deploy_dir, safe_serialization=False)
 
 if __name__ == "__main__":
     app.run(main)
