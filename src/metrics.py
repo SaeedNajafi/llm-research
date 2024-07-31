@@ -217,7 +217,10 @@ def postprocess_qa(txt: str) -> str:
         try:
             txt = txt.split("answer:")[1]
         except Exception:
-            pass
+            try:
+                txt = txt.split("**final answer:**")[1]
+            except Exception:
+                pass
 
     for to_replace in replace_with_space:
         txt = txt.replace(to_replace, "")
