@@ -25,6 +25,8 @@ class LossCalculator:
         ref_policy_lm: Optional[LLM] = None,
         iterative_computation: bool = False,
         reward_normalization_type: str = "zscore",
+        with_baseline: bool = False,
+        baseline_momentum: float = 0.9,
     ):
         super().__init__()
         self.policy_lm = policy_lm
@@ -32,6 +34,10 @@ class LossCalculator:
         self.ref_policy_lm = ref_policy_lm
         self.iterative_computation = iterative_computation
         self.reward_normalization_type = reward_normalization_type
+        self.with_baseline = with_baseline
+        if self.with_baseline:
+            self.baseline_reward = 0.0
+            self.baseline_momentum = baseline_momentum
 
     def compute_policy_log_probs(self, input_texts: List[str], row_ids: List[str], sample_outputs: List[List[str]]) -> Any:
         """Feed the input along with the sampled output to compute the log
@@ -113,7 +119,11 @@ class LossCalculator:
             return rloo_normalize(rewards)
 
     def reinforce_style(
-        self, batch: torch.utils.data.Dataset, sample_outputs: List[List[str]], sample_output_rewards: List[List[float]]
+        self,
+        batch: torch.utils.data.Dataset,
+        sample_outputs: List[List[str]],
+        sample_output_rewards: List[List[float]],
+        subtract_baseline: bool = False,
     ) -> torch.Tensor:
         """We have to feed the input along with new sampled outputs to train
         the policy."""
@@ -124,6 +134,14 @@ class LossCalculator:
             input_texts=original_input_texts, row_ids=original_row_ids, sample_outputs=sample_outputs
         )
         normalized_rewards = self.normalize_rewards(sample_output_rewards)
+        if subtract_baseline:
+            assert self.with_baseline
+            normalized_rewards -= self.baseline_reward
+            new_baseline_reward = torch.mean(torch.mean(normalized_rewards, dim=1), dim=0)
+            self.baseline_reward = (
+                self.baseline_momentum * self.baseline_reward + (1.0 - self.baseline_momentum) * new_baseline_reward
+            )
+
         if self.iterative_computation:
             # with iterative computation, we are dealing with a list of tensors.
             # sequence length might be different between examples.
