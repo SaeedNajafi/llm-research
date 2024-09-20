@@ -14,6 +14,13 @@ from src.utils.rl_utils import mml_normalize, normalize, rloo_normalize, z_scori
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
+flags.DEFINE_integer(
+    "rl_sample_size", 4, "The number of samples to generate from the policy used for both on/off-policy learnings."
+)
+flags.DEFINE_boolean("iterative_computation", False, "Whether to compute the loss per example; useful for avoiding OOM.")
+flags.DEFINE_boolean("with_baseline", False, "Whether to use the baseline reward in RL objective.")
+flags.DEFINE_string("reward_normalization_type", "zscore", "zscore | mml_normalize | normalize | rloo_normalize | no_normalize")
+flags.DEFINE_float("baseline_momentum", 0.9, "momentum used to compute the average reward in the RL baseline.")
 
 
 class LossCalculator:
@@ -23,27 +30,19 @@ class LossCalculator:
         policy_lm: LLM,
         value_lm: Optional[LLM] = None,
         ref_policy_lm: Optional[LLM] = None,
-        iterative_computation: bool = False,
-        reward_normalization_type: str = "zscore",
-        with_baseline: bool = False,
-        baseline_momentum: float = 0.9,
     ):
         super().__init__()
         self.policy_lm = policy_lm
         self.value_lm = value_lm
         self.ref_policy_lm = ref_policy_lm
-        self.iterative_computation = iterative_computation
-        self.reward_normalization_type = reward_normalization_type
-        self.with_baseline = with_baseline
-        if self.with_baseline:
+        if FLAGS.with_baseline:
             self.baseline_reward = 0.0
-            self.baseline_momentum = baseline_momentum
 
     def compute_policy_log_probs(self, input_texts: List[str], row_ids: List[str], sample_outputs: List[List[str]]) -> Any:
         """Feed the input along with the sampled output to compute the log
         probability of the policy for these actions."""
         batch_size = len(input_texts)
-        if self.iterative_computation:
+        if FLAGS.iterative_computation:
             # Useful when we cannot fit all samples for mini-batch at the same time in GPU.
             sequence_log_probs_arr = []
             token_log_probs_arr = []
@@ -106,24 +105,29 @@ class LossCalculator:
     def normalize_rewards(self, sample_output_rewards: List[List[float]]) -> torch.Tensor:
         """Zscore or normalize between [-1, 1] or MML style normalization."""
         rewards = torch.tensor(sample_output_rewards, device=self.policy_lm.device)
-        if self.reward_normalization_type == "zscore":
+        if FLAGS.reward_normalization_type == "zscore":
             return z_scoring(rewards)
 
-        elif self.reward_normalization_type == "normalize":
+        elif FLAGS.reward_normalization_type == "normalize":
             return normalize(rewards)
 
-        elif self.reward_normalization_type == "mml_normalize":
+        elif FLAGS.reward_normalization_type == "mml_normalize":
             return mml_normalize(rewards)
 
-        elif self.reward_normalization_type == "rloo_normalize":
+        elif FLAGS.reward_normalization_type == "rloo_normalize":
             return rloo_normalize(rewards)
 
-    def reinforce_style(
+        elif FLAGS.reward_normalization_type == "no_normalize":
+            return rewards
+
+    def teacher_forcing_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        return self.policy_lm.train(batch)
+
+    def reinforce_loss(
         self,
         batch: torch.utils.data.Dataset,
         sample_outputs: List[List[str]],
         sample_output_rewards: List[List[float]],
-        subtract_baseline: bool = False,
     ) -> torch.Tensor:
         """We have to feed the input along with new sampled outputs to train
         the policy."""
@@ -134,15 +138,18 @@ class LossCalculator:
             input_texts=original_input_texts, row_ids=original_row_ids, sample_outputs=sample_outputs
         )
         normalized_rewards = self.normalize_rewards(sample_output_rewards)
-        if subtract_baseline:
-            assert self.with_baseline
+
+        if FLAGS.with_baseline:
+            # mean pulling over the best rewards per example.
+            max_normalized_rewards, _ = torch.max(normalized_rewards, dim=1, keepdim=True)
             normalized_rewards -= self.baseline_reward
-            new_baseline_reward = torch.mean(torch.mean(normalized_rewards, dim=1), dim=0)
+
+            new_baseline_reward = torch.mean(torch.mean(max_normalized_rewards, dim=1), dim=0)
             self.baseline_reward = (
-                self.baseline_momentum * self.baseline_reward + (1.0 - self.baseline_momentum) * new_baseline_reward
+                FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
             )
 
-        if self.iterative_computation:
+        if FLAGS.iterative_computation:
             # with iterative computation, we are dealing with a list of tensors.
             # sequence length might be different between examples.
             sequence_log_probs = torch.cat(sequence_log_probs, dim=0)
@@ -150,14 +157,38 @@ class LossCalculator:
             # second dimension is the number of samples per example.
             sequence_log_probs = sequence_log_probs.view(batch_size, -1)
 
-        if self.reward_normalization_type == "mml_normalize":
+        if FLAGS.reward_normalization_type == "mml_normalize":
             loss = -torch.mean(torch.sum(sequence_log_probs * normalized_rewards, dim=1), dim=0)
         else:
             loss = -torch.mean(torch.mean(sequence_log_probs * normalized_rewards, dim=1), dim=0)
 
-        # Implement how you can subtract baseline in the Reinforce along these rewards samplings.
         # Implement how you can provide entorpy per-step rewards.
         # Implement how you can provide KL penalty with respect to the reference policy.
         # Test the implementations in a task.
 
         return loss
+
+    def on_policy_rl_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """This is the function to sample from the same policy and train it
+        with RL loss."""
+        generations, _ = self.policy_lm.generation_pass(batch, num_return_sequences=FLAGS.rl_sample_size)
+        cleaned_samples = [text.removeprefix("assistant\n\n") for text in generations]
+        templated_samples = [
+            self.policy_lm.output_template.format(output=f"Final Answer: {sample}") for sample in cleaned_samples
+        ]
+        batch_size = len(templated_samples) // FLAGS.rl_sample_size
+        sample_outputs = [
+            templated_samples[b_idx * FLAGS.rl_sample_size : (b_idx + 1) * FLAGS.rl_sample_size] for b_idx in range(batch_size)
+        ]
+        sample_rewards = [[1.1, 1.2, 1.3, 1.4], [1.3, 1.4, 2.3, 3.4]]
+        loss = self.reinforce_loss(batch, sample_outputs, sample_rewards)
+        return loss
+
+    def train(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """Based on the train objective type, call the right loss function."""
+
+        if FLAGS.objective_type == "teacher_forcing":
+            return self.teacher_forcing_loss(batch)
+
+        elif FLAGS.objective_type == "reinforce":
+            return self.on_policy_rl_loss(batch)

@@ -215,7 +215,7 @@ class LLM(torch.nn.Module):
 
         This will be used for training.
         """
-        # self.train_mode_on()
+        self.train_mode_on()
         loaded_batch = self.data_to_device(
             batch, keys=["lm_input_ids_for_train", "lm_attention_mask_for_train", "lm_attention_mask_for_generation"]
         )
