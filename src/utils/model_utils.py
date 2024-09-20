@@ -368,7 +368,7 @@ def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.n
 
     # good_log_p now has the log probability of the output
     # sequence tokens corresponding to the labels at the [MASK] location.
-    return torch.sum(good_log_p, dim=1)
+    return torch.sum(good_log_p, dim=1), good_log_p
 
 
 def encoder_decoder_log_of_labels(
