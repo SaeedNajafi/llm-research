@@ -8,6 +8,7 @@ from absl import flags
 from torch.utils.data import DataLoader
 
 from src.llm import LLM
+from src.metrics import RewardCalculator
 from src.utils.general_utils import DictDataset
 from src.utils.rl_utils import mml_normalize, normalize, rloo_normalize, z_scoring
 
@@ -28,6 +29,7 @@ class LossCalculator:
         self,
         policy_lm: LLM,
         objective_type: str,
+        reward_name: str,
         value_lm: Optional[LLM] = None,
         ref_policy_lm: Optional[LLM] = None,
     ):
@@ -38,6 +40,7 @@ class LossCalculator:
         if FLAGS.with_baseline:
             self.baseline_reward = 0.0
         self.objective_type = objective_type
+        self.reward_calculator = RewardCalculator(reward_name=reward_name)
 
     def compute_policy_log_probs(self, input_texts: List[str], row_ids: List[str], sample_outputs: List[List[str]]) -> Any:
         """Feed the input along with the sampled output to compute the log
@@ -178,11 +181,11 @@ class LossCalculator:
             self.policy_lm.output_template.format(output=f"Final Answer: {sample}") for sample in cleaned_samples
         ]
         batch_size = len(templated_samples) // FLAGS.rl_sample_size
+        sample_gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
         sample_outputs = [
             templated_samples[b_idx * FLAGS.rl_sample_size : (b_idx + 1) * FLAGS.rl_sample_size] for b_idx in range(batch_size)
         ]
-        # I have to implement the actual reward function.
-        sample_rewards = [[1.1, 1.2, 1.3, 1.4], [1.3, 1.4, 2.3, 3.4]]
+        sample_rewards = self.reward_calculator.compute_rewards(sample_gold_answers, sample_outputs)
         loss = self.reinforce_loss(batch, sample_outputs, sample_rewards)
         return loss
 
