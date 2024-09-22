@@ -13,7 +13,6 @@ from src.utils.rl_utils import mml_normalize, normalize, rloo_normalize, z_scori
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
 flags.DEFINE_integer(
     "rl_sample_size", 4, "The number of samples to generate from the policy used for both on/off-policy learnings."
 )
@@ -28,6 +27,7 @@ class LossCalculator:
     def __init__(
         self,
         policy_lm: LLM,
+        objective_type: str,
         value_lm: Optional[LLM] = None,
         ref_policy_lm: Optional[LLM] = None,
     ):
@@ -37,6 +37,7 @@ class LossCalculator:
         self.ref_policy_lm = ref_policy_lm
         if FLAGS.with_baseline:
             self.baseline_reward = 0.0
+        self.objective_type = objective_type
 
     def compute_policy_log_probs(self, input_texts: List[str], row_ids: List[str], sample_outputs: List[List[str]]) -> Any:
         """Feed the input along with the sampled output to compute the log
@@ -180,6 +181,7 @@ class LossCalculator:
         sample_outputs = [
             templated_samples[b_idx * FLAGS.rl_sample_size : (b_idx + 1) * FLAGS.rl_sample_size] for b_idx in range(batch_size)
         ]
+        # I have to implement the actual reward function.
         sample_rewards = [[1.1, 1.2, 1.3, 1.4], [1.3, 1.4, 2.3, 3.4]]
         loss = self.reinforce_loss(batch, sample_outputs, sample_rewards)
         return loss
@@ -187,8 +189,8 @@ class LossCalculator:
     def train(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Based on the train objective type, call the right loss function."""
 
-        if FLAGS.objective_type == "teacher_forcing":
+        if self.objective_type == "teacher_forcing":
             return self.teacher_forcing_loss(batch)
 
-        elif FLAGS.objective_type == "reinforce":
+        elif self.objective_type == "reinforce":
             return self.on_policy_rl_loss(batch)
