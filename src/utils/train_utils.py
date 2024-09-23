@@ -15,6 +15,7 @@ from absl import flags, logging
 from accelerate.utils import is_ccl_available
 from tqdm import tqdm
 
+from src.trainers import LossCalculator
 from src.utils.memory_utils import MemoryTrace
 from src.utils.save_utils import find_checkpoint, save_checkpoint, save_to_json
 
@@ -69,6 +70,7 @@ def profile() -> Iterator[torch.profiler.profile]:
 
 def train(
     model: Any,
+    loss_calculator: LossCalculator,
     train_dataloader: torch.utils.data.DataLoader,
     eval_dataloader: torch.utils.data.DataLoader,
     rank: int,
@@ -130,7 +132,7 @@ def train(
                     if (step + 1) % FLAGS.gradient_accumulation_steps == 0 or step == len(train_dataloader) - 1:
                         # next forward / backward pass will be synced
                         dist.barrier()
-                        loss = model.train(batch)
+                        loss = loss_calculator.train(batch)
                         loss = -torch.mean(loss, dim=0)
                         loss = loss / FLAGS.gradient_accumulation_steps
                         loss_value = loss.detach().float()
@@ -152,7 +154,7 @@ def train(
                     else:
                         # no need to sync while accumulating gradients
                         with model.model.no_sync():
-                            loss = model.train(batch)
+                            loss = loss_calculator.train(batch)
                             loss = -torch.mean(loss, dim=0)
                             loss = loss / FLAGS.gradient_accumulation_steps
                             loss_value = loss.detach().float()

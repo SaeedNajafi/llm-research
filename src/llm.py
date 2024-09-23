@@ -150,6 +150,7 @@ class LLM(torch.nn.Module):
             add_special_tokens=False,
         )
         data = {
+            "texts": texts,
             "lm_input_ids_for_generation": input_encodings_for_generation.input_ids,
             "lm_attention_mask_for_generation": input_encodings_for_generation.attention_mask,
             "row_ids": row_ids,
@@ -157,13 +158,13 @@ class LLM(torch.nn.Module):
         if gold_answers is not None:
             data["gold_answers"] = gold_answers
 
-        print(max([len(each) for each in data["lm_input_ids_for_generation"]]))
         return data
 
     def prepare_text_for_train(self, texts: List[str], output_texts: List[str], row_ids: List[str]) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for training
         and inference."""
         inputs_for_training = [f"{texts[idx]}{output_texts[idx]}" for idx in range(len(texts))]
+
         input_encodings = self.tokenizer(
             inputs_for_training,
             truncation=True,
@@ -173,13 +174,16 @@ class LLM(torch.nn.Module):
         )
 
         inference_data = self.prepare_text_for_inference(texts, row_ids)
+
         train_data = {
+            "texts": inference_data["texts"],
             "row_ids": inference_data["row_ids"],
             "lm_input_ids_for_train": input_encodings.input_ids,
             "lm_attention_mask_for_train": input_encodings.attention_mask,
             "lm_input_ids_for_generation": inference_data["lm_input_ids_for_generation"],
             "lm_attention_mask_for_generation": inference_data["lm_attention_mask_for_generation"],
         }
+
         return train_data
 
     def predict_mode_on(self) -> None:
@@ -205,7 +209,7 @@ class LLM(torch.nn.Module):
         dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
 
-    def train(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+    def train(self, batch: torch.utils.data.Dataset, per_step_scores: bool = False) -> torch.Tensor:
         """Using the llm, run a forward computation over the batch, compute the
         log probability over the batch.
 
@@ -217,7 +221,7 @@ class LLM(torch.nn.Module):
         )
         input_ids = loaded_batch["lm_input_ids_for_train"]
         attention_mask = loaded_batch["lm_attention_mask_for_train"]
-        original_len_without_answer = torch.sum(loaded_batch["lm_attention_mask_for_generation"], dim=1)
+        original_len_without_answer = torch.sum(loaded_batch["lm_attention_mask_for_generation"], dim=1, keepdim=True)
         with torch.set_grad_enabled(True):
             logits = lm_logits(
                 model=self.model,
@@ -226,13 +230,27 @@ class LLM(torch.nn.Module):
             )
             batch_size, seq_len = input_ids.size()
             masked_labels = input_ids.masked_fill(input_ids == self.tokenizer.pad_token_id, -100)
-            prompt_mask = torch.arange(seq_len, device=self.device).expand(
-                batch_size, seq_len
-            ) < original_len_without_answer.unsqueeze(1)
-            masked_labels = masked_labels.masked_fill(prompt_mask == 1, -100)
-            return decoder_only_log_of_labels(logits=logits, labels=masked_labels, loss_func=self.model.loss_func)
 
-    def generation_pass(self, batch: torch.utils.data.Dataset) -> Tuple[List[str], torch.Tensor]:
+            if self.tokenizer.padding_side == "right":
+                prompt_mask = (
+                    torch.arange(seq_len, device=self.device).expand(batch_size, seq_len) < original_len_without_answer
+                )
+
+            elif self.tokenizer.padding_side == "left":
+                left_pad_lens = torch.sum(torch.where(masked_labels == -100, 1, 0), dim=1, keepdim=True)
+                original_len_with_pads = left_pad_lens + original_len_without_answer
+                prompt_mask = torch.arange(seq_len, device=self.device).expand(batch_size, seq_len) < original_len_with_pads
+
+            masked_labels = masked_labels.masked_fill(prompt_mask == 1, -100)
+            sequence_log_probs, token_log_probs = decoder_only_log_of_labels(
+                logits=logits, labels=masked_labels, loss_func=self.model.loss_func
+            )
+            if per_step_scores:
+                return sequence_log_probs, token_log_probs, logits, masked_labels
+            else:
+                return sequence_log_probs
+
+    def generation_pass(self, batch: torch.utils.data.Dataset, num_return_sequences: int = 1) -> Tuple[List[str], torch.Tensor]:
         """Using the llm, generate new text.
 
         This will be used for inference.
@@ -255,7 +273,7 @@ class LLM(torch.nn.Module):
                         top_p=FLAGS.top_p,
                         temperature=FLAGS.temperature,
                         max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                        num_return_sequences=1,
+                        num_return_sequences=num_return_sequences,
                         output_logits=True,
                         return_dict_in_generate=True,
                         use_cache=True,
@@ -271,7 +289,7 @@ class LLM(torch.nn.Module):
                     top_p=FLAGS.top_p,
                     temperature=FLAGS.temperature,
                     max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                    num_return_sequences=1,
+                    num_return_sequences=num_return_sequences,
                     output_logits=True,
                     return_dict_in_generate=True,
                     use_cache=True,
@@ -286,7 +304,9 @@ class LLM(torch.nn.Module):
         logits_list = list(predictions_output.logits)
         logits = torch.stack(logits_list, dim=1)
         labels_to_consider = selected_samples.masked_fill(selected_samples == self.tokenizer.pad_token_id, -100)
-        final_log_ps = log_of_labels(logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func)
+        final_log_ps, token_final_log_ps = log_of_labels(
+            logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func
+        )
         actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
         # Average log probs per token (length normalization).
         return predictions_str, final_log_ps / actual_lens

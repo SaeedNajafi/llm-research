@@ -331,6 +331,39 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
     return scores
 
 
+class RewardCalculator:
+    """This class will be used to compute rewards to train text generators."""
+
+    def __init__(self, reward_name: str):
+        self.reward_name = reward_name
+
+    def compute_rewards(self, sample_gold_answers: List[List[str]], sample_outputs: List[List[str]]) -> List[List[float]]:
+        """Depending on the reward function, call the necessary functions."""
+        sample_rewards = []
+        if self.reward_name in [
+            "squadv2_metrics_f1",
+            "squadv2_metrics_recall",
+            "squadv2_metrics_precision",
+            "squadv2_metrics_exact",
+        ]:
+            for batch_idx in range(len(sample_gold_answers)):
+                per_example_rewards = []
+                for sample_idx in range(len(sample_gold_answers[batch_idx])):
+                    gold_answer_string = sample_gold_answers[batch_idx][sample_idx]
+                    references = [normalize_answer(str(ans)) for ans in str(gold_answer_string).split("_@_")]
+                    prediction = normalize_answer(sample_outputs[batch_idx][sample_idx])
+                    if self.reward_name == "squadv2_metrics_f1":
+                        per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[0] for ref in references))
+                    elif self.reward_name == "squadv2_metrics_recall":
+                        per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[2] for ref in references))
+                    elif self.reward_name == "squadv2_metrics_precision":
+                        per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[1] for ref in references))
+                    elif self.reward_name == "squadv2_metrics_exact":
+                        per_example_rewards.append(max(compute_exact(ref, prediction) for ref in references))
+                sample_rewards.append(per_example_rewards)
+        return sample_rewards
+
+
 def main(argv: Any) -> None:
     """Test the metrics."""
     del argv

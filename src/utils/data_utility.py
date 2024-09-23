@@ -1,26 +1,20 @@
 """This module implements the functions for preprocessing the data files into
-pytorch datasets and eventually to create a dataloader.
-
-We consider distributed training in clusters where there could be
-preemption of the jobs. Therefore, we save the dataloader status along
-with other components (optimizer, model, etc.)
-"""
+pytorch datasets and eventually to create a dataloader."""
 
 import ast
 import random
-from typing import Any, Dict, List, Tuple
+from typing import List, Tuple
 
 import pandas as pd
-import torch
 from absl import flags
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from src.llm import LLM
 from src.squadv2_instructions import contexts, explanation_instruction, explanations
 from src.squadv2_instructions import gold_answers as context_gold_answers
 from src.squadv2_instructions import normal_instruction, questions
-from src.utils.general_utils import white_space_fix
+from src.utils.general_utils import DictDataset, white_space_fix
 
 FLAGS = flags.FLAGS
 
@@ -28,35 +22,6 @@ flags.DEFINE_string("dev_file", "/tmp/dev.csv", "the path/name of the dev file."
 flags.DEFINE_string("test_file", "/tmp/test.csv", "the path/name of the test file.")
 flags.DEFINE_string("train_file", "/tmp/train.csv", "the path/name of the train file.")
 flags.DEFINE_string("prediction_file", "/tmp/predictions.csv", "the path/name of the prediction file.")
-
-
-class DictDataset(Dataset):
-    """Subclass the pytorch's Dataset to build my own dataset for the text
-    tasks.
-
-    May need to return actual text instead of ids for better processing
-    in the code.
-    """
-
-    def __init__(self, data: Dict[str, Any]) -> None:
-        """Store the reference to the tokenized data."""
-        self.data = data
-        self.keys = list(self.data.keys())
-
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """Return the elements for example index 'idx' as a dictionary with
-        tensor values or just strings."""
-        ret = {}
-        for key, val in self.data.items():
-            if isinstance(val[idx], str) or isinstance(val[idx], torch.Tensor):
-                ret[key] = val[idx]
-            else:
-                ret[key] = torch.tensor(val[idx])
-        return ret
-
-    def __len__(self) -> int:
-        """Return the length of the data."""
-        return len(self.data[self.keys[0]])
 
 
 def process_squadv2_dataset(

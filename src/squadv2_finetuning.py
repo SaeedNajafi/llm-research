@@ -8,14 +8,15 @@ import os
 from typing import Any
 
 import torch
+import wandb
 from absl import app, flags
 from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import StateDictType  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-import wandb
 from src.llm import Gemma2QA, Llama3QA, Llama31QA
 from src.metrics import qa_metric_squadv2_metrics
+from src.trainers import LossCalculator
 from src.utils.data_utility import create_squadv2_dataloader
 from src.utils.general_utils import clear_gpu_cache, set_random_seed
 from src.utils.save_utils import find_checkpoint
@@ -29,6 +30,7 @@ flags.DEFINE_string("project_name", "llm_research", "name for these runs.")
 flags.DEFINE_string("experiment_type", "normal_no_icl", "normal_no_icl | normal_icl | explanation_icl | explanation_no_icl")
 flags.DEFINE_integer("train_batch_size", 8, "train batch size.")
 flags.DEFINE_integer("eval_batch_size", 8, "eval batch size.")
+flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
 
 
 def setup_wandb() -> Any:
@@ -75,6 +77,9 @@ def main(argv: Any) -> None:
         if FLAGS.use_peft:
             wandb_run.config.update(model.peft_config)
 
+    if FLAGS.objective_type in ["teacher_forcing", "reinforce"]:
+        loss_calculator = LossCalculator(policy_lm=model, objective_type=FLAGS.objective_type, reward_name="squadv2_metrics_f1")
+
     if FLAGS.mode == "train":
         train_dataloader = create_squadv2_dataloader(
             model,
@@ -97,6 +102,7 @@ def main(argv: Any) -> None:
         # Start the training process
         results = train(
             model,
+            loss_calculator,
             train_dataloader,
             eval_dataloader,
             rank,

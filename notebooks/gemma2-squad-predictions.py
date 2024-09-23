@@ -19,8 +19,8 @@ from src.utils.data_utility import process_squadv2_dataset
 FLAGS = flags.FLAGS
 
 # Gemma2 chat templates.
-instruction_template = "<bos><start_of_turn>user\n{instruction}"
-input_template = "\n{input}<end_of_turn>\n<start_of_turn>model"
+instruction_template = "<bos><start_of_turn>user\n{instruction}<end_of_turn>"
+input_template = "\n<start_of_turn>user\n{input}<end_of_turn>\n<start_of_turn>model"
 output_template = "\n{output} <end_of_turn>"
 
 
@@ -29,8 +29,7 @@ def main(argv: Any) -> None:
     del argv
     input_file = FLAGS.test_file
 
-    # experiment_types = ["normal_no_icl", "explanation_no_icl", "normal_icl", "explanation_icl"]
-    experiment_types = ["normal_no_icl"]
+    experiment_types = ["explanation_with_icl"]
     for experiment_type in experiment_types:
         output_file = FLAGS.prediction_file
         # read the input data.
@@ -52,7 +51,7 @@ def main(argv: Any) -> None:
                 server_url=FLAGS.server_url,
                 model_name=FLAGS.model_name,
                 inputs=squad_inputs,
-                num_threads=4,
+                num_threads=8,
                 max_new_tokens=256,
                 max_retries=3,
                 seconds_between_retries=10,
