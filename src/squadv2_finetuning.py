@@ -78,7 +78,7 @@ def main(argv: Any) -> None:
             wandb_run.config.update(model.peft_config)
 
     if FLAGS.objective_type in ["teacher_forcing", "reinforce"]:
-        loss_calculator = LossCalculator(policy_lm=model, objective_type=FLAGS.objective_type)
+        loss_calculator = LossCalculator(policy_lm=model, objective_type=FLAGS.objective_type, reward_name="squadv2_metrics_f1")
 
     if FLAGS.mode == "train":
         train_dataloader = create_squadv2_dataloader(
