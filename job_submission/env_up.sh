@@ -13,5 +13,5 @@ if [ "$CLUSTER_NAME" = "vcluster" ]; then
     export NCCL_IB_DISABLE=1  # Our cluster does not have InfiniBand. We need to disable usage using this flag.
 fi
 
-export PYTHONFAULTHANDLER=1
-export CUDA_LAUNCH_BLOCKING=1
+# export PYTHONFAULTHANDLER=1
+# export CUDA_LAUNCH_BLOCKING=1

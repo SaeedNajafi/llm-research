@@ -29,8 +29,20 @@ flags.DEFINE_string(
 )
 flags.DEFINE_string("llm_name", "gemma2", "gemma2 | llama3")
 flags.DEFINE_integer("t_0", 10, "number of epochs before resetting the learning rate with scheduler.")
-flags.DEFINE_float("top_p", 0.9, "top_p value in nucleus sampling.", upper_bound=1.0, lower_bound=0.0)
-flags.DEFINE_float("temperature", 0.01, "temperature value used in the softmax function.", lower_bound=0.0)
+flags.DEFINE_float("test_top_p", 0.9, "top_p value in nucleus sampling for inference.", upper_bound=1.0, lower_bound=0.0)
+flags.DEFINE_float(
+    "train_top_p", 0.95, "top_p value in nucleus sampling for training/sampling.", upper_bound=1.0, lower_bound=0.0
+)
+flags.DEFINE_float(
+    "test_temperature", 0.0001, "temperature value used in the softmax function for prediction.", lower_bound=0.0
+)
+flags.DEFINE_float(
+    "train_temperature",
+    1.0,
+    "temperature value used in the softmax function for drawing samples during training.",
+    lower_bound=0.0,
+)
+
 flags.DEFINE_integer("input_max_length", 1024, "max number of tokens for the input context.")
 flags.DEFINE_integer("output_max_length", 256, "max number of tokens for the output context.")
 
@@ -160,7 +172,9 @@ class LLM(torch.nn.Module):
 
         return data
 
-    def prepare_text_for_train(self, texts: List[str], output_texts: List[str], row_ids: List[str]) -> Dict[str, Any]:
+    def prepare_text_for_train(
+        self, texts: List[str], output_texts: List[str], row_ids: List[str], gold_answers: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Convert texts to ids and return the dataset required for training
         and inference."""
         inputs_for_training = [f"{texts[idx]}{output_texts[idx]}" for idx in range(len(texts))]
@@ -173,7 +187,7 @@ class LLM(torch.nn.Module):
             add_special_tokens=False,
         )
 
-        inference_data = self.prepare_text_for_inference(texts, row_ids)
+        inference_data = self.prepare_text_for_inference(texts, row_ids, gold_answers=gold_answers)
 
         train_data = {
             "texts": inference_data["texts"],
@@ -183,6 +197,8 @@ class LLM(torch.nn.Module):
             "lm_input_ids_for_generation": inference_data["lm_input_ids_for_generation"],
             "lm_attention_mask_for_generation": inference_data["lm_attention_mask_for_generation"],
         }
+        if gold_answers is not None:
+            train_data["gold_answers"] = inference_data["gold_answers"]
 
         return train_data
 
@@ -250,7 +266,9 @@ class LLM(torch.nn.Module):
             else:
                 return sequence_log_probs
 
-    def generation_pass(self, batch: torch.utils.data.Dataset, num_return_sequences: int = 1) -> Tuple[List[str], torch.Tensor]:
+    def generation_pass(
+        self, batch: torch.utils.data.Dataset, top_p: float = 0.9, temperature: float = 0.0001, num_return_sequences: int = 1
+    ) -> Tuple[List[str], torch.Tensor]:
         """Using the llm, generate new text.
 
         This will be used for inference.
@@ -270,8 +288,8 @@ class LLM(torch.nn.Module):
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         do_sample=True,
-                        top_p=FLAGS.top_p,
-                        temperature=FLAGS.temperature,
+                        top_p=top_p,
+                        temperature=temperature,
                         max_length=FLAGS.input_max_length + FLAGS.output_max_length,
                         num_return_sequences=num_return_sequences,
                         output_logits=True,
@@ -286,8 +304,8 @@ class LLM(torch.nn.Module):
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     do_sample=True,
-                    top_p=FLAGS.top_p,
-                    temperature=FLAGS.temperature,
+                    top_p=top_p,
+                    temperature=temperature,
                     max_length=FLAGS.input_max_length + FLAGS.output_max_length,
                     num_return_sequences=num_return_sequences,
                     output_logits=True,
@@ -313,7 +331,9 @@ class LLM(torch.nn.Module):
 
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
-        answers, log_ps = self.generation_pass(batch)
+        answers, log_ps = self.generation_pass(
+            batch, top_p=FLAGS.test_top_p, temperature=FLAGS.test_temperature, num_return_sequences=1
+        )
         loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().float().cpu().numpy()
         for idx, answer in enumerate(answers):

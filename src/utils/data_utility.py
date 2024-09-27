@@ -117,7 +117,7 @@ def create_squadv2_dataloader(
     )
 
     if fold_name == "train":
-        data = model.prepare_text_for_train(squad_inputs, squad_outputs, squad_ids)
+        data = model.prepare_text_for_train(squad_inputs, squad_outputs, squad_ids, gold_answers=gold_outputs)
         dataset = DictDataset(data)
         shuffle = True
 
