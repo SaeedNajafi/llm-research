@@ -44,8 +44,9 @@
 --ddp
 --rl_sample_size=4
 --iterative_computation=false
---with_baseline=false
---reward_normalization_type=mml_normalize
+--with_baseline
+--reward_normalization_type=no_normalize
 --baseline_momentum=0.9
 --objective_type=reinforce
---compute_per_step_entropy=false
+--compute_per_step_entropy
+--entropy_coef=1.0

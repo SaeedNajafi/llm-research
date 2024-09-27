@@ -5,6 +5,7 @@ from typing import Any, List, Optional
 
 import torch
 from absl import flags
+from torch.distributions import Categorical
 from torch.utils.data import DataLoader
 
 from src.llm import LLM
@@ -22,6 +23,7 @@ flags.DEFINE_boolean("with_baseline", False, "Whether to use the baseline reward
 flags.DEFINE_string("reward_normalization_type", "zscore", "zscore | mml_normalize | normalize | rloo_normalize | no_normalize")
 flags.DEFINE_float("baseline_momentum", 0.9, "momentum used to compute the average reward in the RL baseline.")
 flags.DEFINE_boolean("compute_per_step_entropy", False, "Whether to add per-step entropy to the loss in RL training.")
+flags.DEFINE_float("entropy_coef", 0.1, "Coefficient used to mix per-step entropy loss in RL training.")
 
 
 class LossCalculator:
@@ -87,7 +89,6 @@ class LossCalculator:
             return sequence_log_probs_arr, token_log_probs_arr, logits_arr, masked_labels_arr
 
         else:
-
             expanded_input_texts = list(chain.from_iterable([[text] * FLAGS.rl_sample_size for text in input_texts]))
             expanded_row_ids = list(chain.from_iterable([[row_id] * FLAGS.rl_sample_size for row_id in row_ids]))
             flattened_sample_outputs = list(chain.from_iterable(sample_outputs))
@@ -102,32 +103,27 @@ class LossCalculator:
                 num_workers=1,
             )
             sequence_log_probs_arr = []
-            token_log_probs_arr = []
-            logits_arr = []
-            masked_labels_arr = []
+            sequence_entropy_arr = []
             if compute_per_step_entropy:
                 for batch in dataloader:
-                    sequence_log_probs_sample, token_log_probs_sample, logits_sample, masked_labels_sample = (
-                        self.policy_lm.train(batch, per_step_scores=True)
+                    sequence_log_probs_sample, _, logits_sample, masked_labels_sample = self.policy_lm.train(
+                        batch, per_step_scores=True
                     )
                     sequence_log_probs_arr.append(sequence_log_probs_sample)
-                    token_log_probs_arr.append(token_log_probs_sample)
-                    logits_arr.append(logits_sample)
-                    masked_labels_arr.append(masked_labels_sample)
+
+                    # Compute per-step entropy.
+                    entropy_masks = torch.where(masked_labels_sample == -100, 0, 1)
+                    actual_lens = torch.sum(entropy_masks, dim=1)
+                    distribution = Categorical(logits=logits_sample)
+                    sequence_entropy_sample = torch.sum(distribution.entropy() * entropy_masks, dim=1) / actual_lens
+                    sequence_entropy_arr.append(sequence_entropy_sample)
 
                 sequence_log_probs = torch.cat(sequence_log_probs_arr, dim=0)
-                token_log_probs = torch.cat(token_log_probs_arr, dim=0)
-                logits = torch.cat(logits_arr, dim=0)
-                masked_labels = masked_labels.cat(masked_labels, dim=0)
+                sequence_entropy = torch.cat(sequence_entropy_arr, dim=0)
 
-                _, sequence_length, vocab_size = logits.size()
                 sequence_log_probs = sequence_log_probs.view(batch_size, FLAGS.rl_sample_size)
-
-                # the sequence length in the token_log_probs has been shifted to the right by 1 position.
-                token_log_probs = token_log_probs.view(batch_size, FLAGS.rl_sample_size, sequence_length - 1)
-                logits = logits.view(batch_size, FLAGS.rl_sample_size, sequence_length, vocab_size)
-                masked_labels = masked_labels.view(batch_size, FLAGS.rl_sample_size, sequence_length)
-                return sequence_log_probs, token_log_probs, logits, masked_labels
+                sequence_entropy = sequence_entropy.view(batch_size, FLAGS.rl_sample_size)
+                return sequence_log_probs, sequence_entropy
             else:
                 for batch in dataloader:
                     sequence_log_probs_sample = self.policy_lm.train(batch, per_step_scores=False)
@@ -135,7 +131,7 @@ class LossCalculator:
 
                 sequence_log_probs = torch.cat(sequence_log_probs_arr, dim=0)
                 sequence_log_probs = sequence_log_probs.view(batch_size, FLAGS.rl_sample_size)
-                return sequence_log_probs, None, None, None
+                return sequence_log_probs, None
 
     def normalize_rewards(self, sample_output_rewards: List[List[float]]) -> torch.Tensor:
         """Zscore or normalize between [-1, 1] or MML style normalization."""
@@ -170,7 +166,7 @@ class LossCalculator:
         original_input_texts = batch["texts"]
         original_row_ids = batch["row_ids"]
 
-        sequence_log_probs, token_log_probs, logits, masked_labels = self.compute_policy_log_probs(
+        sequence_log_probs, sequence_entropy = self.compute_policy_log_probs(
             input_texts=original_input_texts,
             row_ids=original_row_ids,
             sample_outputs=sample_outputs,
@@ -201,7 +197,12 @@ class LossCalculator:
         else:
             loss = -torch.mean(torch.mean(sequence_log_probs * normalized_rewards, dim=1), dim=0)
 
-        # Implement how you can provide entorpy per-step rewards.
+        if compute_per_step_entropy:
+            entropy_loss_part_one = -torch.mean(torch.mean(sequence_log_probs * sequence_entropy.detach(), dim=1), dim=0)
+            entropy_loss_part_two = -torch.mean(torch.mean(sequence_entropy, dim=1), dim=0)
+            entropy_loss = entropy_loss_part_one + entropy_loss_part_two
+            loss += FLAGS.entropy_coef * entropy_loss
+
         # Implement how you can provide KL penalty with respect to the reference policy.
         # Test the implementations in a task.
 
