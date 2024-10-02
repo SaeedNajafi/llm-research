@@ -11,17 +11,25 @@ eval "$(conda shell.bash hook)"
 
 conda activate ${ENV_NAME}
 
+echo "Installing cxx-compiler and gxx and gcc."
+conda install -c conda-forge cxx-compiler -y
+conda install -c conda-forge gxx -y
+conda install -c conda-forge gcc -y
+
 echo "Installing git."
 conda install -c anaconda git -y
 
 echo "Installing git-lfs."
-conda install conda-forge::git-lfs -y
+conda install -c conda-forge git-lfs -y
 
 echo "Installing rust."
-conda install conda-forge::rust -y
+conda install -c conda-forge rust -y
 
-echo "Installing cuda-nvcc."
-conda install nvidia/label/cuda-12.2.1::cuda-nvcc -y
+echo "Installing cuda drivers."
+conda install -c nvidia/label/cuda-12.4.1 cuda -y
+conda install -c nvidia/label/cuda-12.4.1 cuda-nvcc -y
+conda install -c nvidia/label/cuda-12.4.1 cuda-toolkit -y
+conda install -c conda-forge cudnn -y
 
 # Get rid of cluster python.
 module --force purge
@@ -30,7 +38,8 @@ echo "Upgrade pip."
 pip3 install --upgrade pip
 
 echo "Install torch and tensorflow."
-pip3 install torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 tensorflow tensorflow-hub
+conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
+pip3 install tensorflow tensorflow-hub
 
 echo "Install the editable version of llm-research."
 pip3 install -e .[dev]
@@ -46,7 +55,7 @@ pip3 install --no-cache-dir flash-attn --no-build-isolation
 pip3 install vllm ray llvmlite vllm-flash-attn
 
 echo "Install flashinfer for vllm and gemma2 models."
-pip3 install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.3
+pip3 install flashinfer -i https://flashinfer.ai/whl/cu124/torch2.4
 
 echo "Fix sqlite"
 conda remove sqlite -y

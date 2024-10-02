@@ -27,7 +27,6 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "model_path", "/model-weights/gemma-2-9b-it", "/model-weights/Meta-Llama-3-8B-Instruct | /model-weights/gemma-2-9b-it"
 )
-flags.DEFINE_string("llm_name", "gemma2", "gemma2 | llama3")
 flags.DEFINE_integer("t_0", 10, "number of epochs before resetting the learning rate with scheduler.")
 flags.DEFINE_float("test_top_p", 0.9, "top_p value in nucleus sampling for inference.", upper_bound=1.0, lower_bound=0.0)
 flags.DEFINE_float(
@@ -66,7 +65,9 @@ _LLAMA31_EXTRA_TOKENS = {
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
 
-    def __init__(self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0) -> None:
+    def __init__(
+        self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0
+    ) -> None:
         super().__init__()
 
         self.rank = rank

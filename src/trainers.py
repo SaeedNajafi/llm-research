@@ -204,8 +204,29 @@ class LossCalculator:
             loss += FLAGS.entropy_coef * entropy_loss
 
         # Implement how you can provide KL penalty with respect to the reference policy.
+
         # Test the implementations in a task.
 
+        # TODO: 1 - Implement having a reference model on another GPU for inference Only.
+
+        # 3 - Implement the approximate KL used in PPO's original paper.
+
+        # 5 - Implement the Genealized Advantage Function and Consider the Value Network with a loss to train it.
+
+        # Provide Implementation for PPO and A2C.
+
+        # Switch to NarrativeQA dataset.
+
+        # Exactly Implement this: https://github.com/allenai/RL4LMs/blob/main/rl4lms/algorithms/ppo/ppo.py
+
+        # Exactly Implement this: https://github.com/allenai/RL4LMs/blob/main/rl4lms/algorithms/a2c/a2c.py
+
+        # TODO: Research Questions:
+        # Should we consider the KL div similar to RLHF?
+        # Should we switch to MiniLLM idea to approximate the reverse KL?
+        # Should we implement DPO?
+        # Should we implement the soft q-learning?
+        # Should we implement the soft actor-critic?
         return loss
 
     def on_policy_rl_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
