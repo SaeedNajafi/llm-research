@@ -20,7 +20,7 @@ INSTALL_REQUIRES = [
     "nltk",
     "absl-py",
     "tqdm",
-    "llm2vec",
+    # "llm2vec",
     "wandb",
     "bitsandbytes",
     "sentence_transformers",
@@ -31,7 +31,7 @@ INSTALL_REQUIRES = [
     "wheel",
     "setuptools",
     "tensorrt",
-    "triton"
+    "triton",
 ]
 
 DEV_REQUIRES = [

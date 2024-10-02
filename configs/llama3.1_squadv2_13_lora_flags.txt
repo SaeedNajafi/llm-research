@@ -49,4 +49,4 @@
 --baseline_momentum=0.9
 --objective_type=reinforce
 --compute_per_step_entropy
---entropy_coef=1.0
+--entropy_coef=0.1

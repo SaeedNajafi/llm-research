@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 import pandas as pd
 import torch
 from absl import app, flags
-from llm2vec import LLM2Vec
+# from llm2vec import LLM2Vec
 from peft import PeftModel
 from sentence_transformers import SentenceTransformer
 from transformers import AutoConfig, AutoModel, AutoTokenizer
@@ -29,34 +29,34 @@ flags.DEFINE_string("metric_type", "llm2vec", "llm2vec or sentence-t5 model?")
 flags.DEFINE_string("input_file", "/path/filename", "absolute path and name of the file.")
 
 
-def load_llm2vec(cuda_device: str) -> LLM2Vec:
-    # Loading base llama-3-8b model, along with custom code that enables bidirectional connections in decoder-only
-    # LLMs. MNTP LoRA weights are merged into the base model.
-    tokenizer = AutoTokenizer.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp")
-    config = AutoConfig.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp", trust_remote_code=True)
-    model = AutoModel.from_pretrained(
-        "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
-        trust_remote_code=True,
-        config=config,
-        torch_dtype=torch.bfloat16,
-        device_map=cuda_device if torch.cuda.is_available() else "cpu",
-    )
-    model = PeftModel.from_pretrained(
-        model,
-        "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
-    )
-    model = model.merge_and_unload()  # This can take several minutes on cpu
+# def load_llm2vec(cuda_device: str) -> LLM2Vec:
+#     # Loading base llama-3-8b model, along with custom code that enables bidirectional connections in decoder-only
+#     # LLMs. MNTP LoRA weights are merged into the base model.
+#     tokenizer = AutoTokenizer.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp")
+#     config = AutoConfig.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp", trust_remote_code=True)
+#     model = AutoModel.from_pretrained(
+#         "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+#         trust_remote_code=True,
+#         config=config,
+#         torch_dtype=torch.bfloat16,
+#         device_map=cuda_device if torch.cuda.is_available() else "cpu",
+#     )
+#     model = PeftModel.from_pretrained(
+#         model,
+#         "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+#     )
+#     model = model.merge_and_unload()  # This can take several minutes on cpu
 
-    # Loading supervised model. This loads the trained LoRA weights on top of MNTP model.
-    # Hence the final weights are -- Base model + MNTP (LoRA) + supervised (LoRA).
-    model = PeftModel.from_pretrained(model, "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised")
+#     # Loading supervised model. This loads the trained LoRA weights on top of MNTP model.
+#     # Hence the final weights are -- Base model + MNTP (LoRA) + supervised (LoRA).
+#     model = PeftModel.from_pretrained(model, "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised")
 
-    model = model.eval()
+#     model = model.eval()
 
-    # Wrapper for encoding and pooling operations
-    l2v = LLM2Vec(model, tokenizer, pooling_mode="mean", max_length=8192)
+#     # Wrapper for encoding and pooling operations
+#     l2v = LLM2Vec(model, tokenizer, pooling_mode="mean", max_length=8192)
 
-    return l2v
+#     return l2v
 
 
 class QAMetricModel:
@@ -70,10 +70,11 @@ class QAMetricModel:
         self.device = device
         self.batch_size = batch_size
         self.metric_type = metric_type
-        if self.metric_type == "llm2vec":
-            self.metric_model = load_llm2vec(self.device)
-            self.instruction = "Retrieve Wikipedia passages that answer the question."
-        elif self.metric_type == "sentence_t5":
+        self.instruction = "Retrieve Wikipedia passages that answer the question."
+        #if self.metric_type == "llm2vec":
+        #    self.metric_model = load_llm2vec(self.device)
+        #elif self.metric_type == "sentence_t5":
+        if self.metric_type == "sentence_t5":
             self.metric_model = SentenceTransformer(self.sentence_t5_model_id, device=self.device).eval()
 
     def compute_metric(self, predictions: List[str], references: List[List[str]]) -> float:
