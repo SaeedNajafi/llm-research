@@ -26,9 +26,9 @@ echo "Installing rust."
 conda install -c conda-forge rust -y
 
 echo "Installing cuda drivers."
-conda install -c nvidia/label/cuda-12.4.1 cuda -y
-conda install -c nvidia/label/cuda-12.4.1 cuda-nvcc -y
-conda install -c nvidia/label/cuda-12.4.1 cuda-toolkit -y
+conda install -c nvidia/label/cuda-12.1.1 cuda -y
+conda install -c nvidia/label/cuda-12.1.1 cuda-nvcc -y
+conda install -c nvidia/label/cuda-12.1.1 cuda-toolkit -y
 conda install -c conda-forge cudnn -y
 
 # Get rid of cluster python.
@@ -38,11 +38,11 @@ echo "Upgrade pip."
 pip3 install --upgrade pip
 
 echo "Install torch and tensorflow."
-conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
+conda install pytorch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 pytorch-cuda=12.1 -c pytorch -c nvidia
 pip3 install tensorflow tensorflow-hub
 
 echo "Install the editable version of llm-research."
-pip3 install -e .[dev]
+pip3 install --use-pep517 -e .[dev]
 
 export CUDA_HOME=$CONDA_PREFIX
 export NCCL_HOME=$CONDA_PREFIX
@@ -55,7 +55,7 @@ pip3 install --no-cache-dir flash-attn --no-build-isolation
 pip3 install vllm ray llvmlite vllm-flash-attn
 
 echo "Install flashinfer for vllm and gemma2 models."
-pip3 install flashinfer -i https://flashinfer.ai/whl/cu124/torch2.4
+pip3 install flashinfer -i https://flashinfer.ai/whl/cu121/torch2.4
 
 echo "Fix sqlite"
 conda remove sqlite -y

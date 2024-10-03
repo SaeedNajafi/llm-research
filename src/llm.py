@@ -65,9 +65,7 @@ _LLAMA31_EXTRA_TOKENS = {
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
 
-    def __init__(
-        self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0
-    ) -> None:
+    def __init__(self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0) -> None:
         super().__init__()
 
         self.rank = rank
@@ -268,8 +266,13 @@ class LLM(torch.nn.Module):
                 return sequence_log_probs
 
     def generation_pass(
-        self, batch: torch.utils.data.Dataset, top_p: float = 0.9, temperature: float = 0.0001, num_return_sequences: int = 1
-    ) -> Tuple[List[str], torch.Tensor]:
+        self,
+        batch: torch.utils.data.Dataset,
+        top_p: float = 0.9,
+        temperature: float = 0.0001,
+        num_return_sequences: int = 1,
+        to_train: bool = False,
+    ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Using the llm, generate new text.
 
         This will be used for inference.
@@ -278,7 +281,7 @@ class LLM(torch.nn.Module):
         loaded_batch = self.data_to_device(batch, keys=["lm_input_ids_for_generation", "lm_attention_mask_for_generation"])
         input_ids = loaded_batch["lm_input_ids_for_generation"]
         attention_mask = loaded_batch["lm_attention_mask_for_generation"]
-        with torch.no_grad():
+        with torch.set_grad_enabled(to_train):
             if self.distributed_strategy == "fsdp":
                 # these weird line is necessary
                 # https://github.com/pytorch/pytorch/issues/100069
@@ -295,6 +298,7 @@ class LLM(torch.nn.Module):
                         num_return_sequences=num_return_sequences,
                         output_logits=True,
                         return_dict_in_generate=True,
+                        return_legacy_cache=True,
                         use_cache=True,
                         renormalize_logits=True,
                         eos_token_id=self.terminators,
@@ -311,6 +315,7 @@ class LLM(torch.nn.Module):
                     num_return_sequences=num_return_sequences,
                     output_logits=True,
                     return_dict_in_generate=True,
+                    return_legacy_cache=True,
                     use_cache=True,
                     renormalize_logits=True,
                     eos_token_id=self.terminators,
@@ -328,13 +333,14 @@ class LLM(torch.nn.Module):
         )
         actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
         # Average log probs per token (length normalization).
-        return predictions_str, final_log_ps / actual_lens
+        return predictions_str, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider
 
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
-        answers, log_ps = self.generation_pass(
+        answers, final_log_ps, _, actual_lens, _, _ = self.generation_pass(
             batch, top_p=FLAGS.test_top_p, temperature=FLAGS.test_temperature, num_return_sequences=1
         )
+        log_ps = final_log_ps / actual_lens
         loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().float().cpu().numpy()
         for idx, answer in enumerate(answers):

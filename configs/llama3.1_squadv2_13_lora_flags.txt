@@ -1,10 +1,10 @@
---dev_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
---test_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/original_validation.tsv
---train_file=/home/saeednjf/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-sep23
---prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-sep23/internal_validation_prediction_squadv2.csv
---r=64
---lora_alpha=64
+--dev_file=/fs01/home/snajafi/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
+--test_file=/fs01/home/snajafi/llm-research/data/0.1-shot-datasets/squad/original_validation.tsv
+--train_file=/fs01/home/snajafi/llm-research/data/0.1-shot-datasets/squad/0.1-13-dev.tsv
+--checkpoint_folder=/fs01/home/snajafi/llm-research/temp-models
+--prediction_file=/fs01/home/snajafi/llm-research/temp-models/internal_validation_prediction_squadv2.csv
+--r=32
+--lora_alpha=32
 --lora_dropout=0.1
 --target_modules=q_proj,v_proj,o_proj,k_proj
 --use_peft
@@ -23,7 +23,7 @@
 --gradient_clipping_threshold=1.0
 --run_validation
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models/Meta-Llama-3.1-8B-Instruct
+--model_path=/model-weights/Meta-Llama-3.1-8B-Instruct
 --llm_name=llama3.1
 --t_0=3
 --test_top_p=0.9
@@ -43,9 +43,8 @@
 --eval_batch_size=1
 --ddp
 --rl_sample_size=4
---iterative_computation=false
 --with_baseline
---reward_normalization_type=no_normalize
+--reward_normalization_type=mml_normalize
 --baseline_momentum=0.9
 --objective_type=reinforce
 --compute_per_step_entropy

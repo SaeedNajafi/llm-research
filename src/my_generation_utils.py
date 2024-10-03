@@ -262,7 +262,6 @@ class MyGenerationMixin(GenerationMixin):
     huggingface to mix-in-the model.
     """
 
-    @torch.no_grad()
     def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
@@ -366,7 +365,6 @@ class MyGenerationMixin(GenerationMixin):
                     - [`~generation.GenerateEncoderDecoderOutput`],
                     - [`~generation.GenerateBeamEncoderDecoderOutput`]
         """
-        print("This is my generation.")
         # 1. Handle `generation_config` and kwargs that might update it, and validate the `.generate()` call
         self._validate_model_class()
         tokenizer = kwargs.pop("tokenizer", None)  # Pull this out first, we only use it for stopping criteria
