@@ -22,7 +22,7 @@ if [ "${LAUNCH_MODE}" = "train" ]; then
             --mem ${MEM}G \
             --time ${TIME} \
             ${CURR_DIR}/job_submission/train.slrm ${CURR_DIR}/${SCRIPT} \
-            ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR}
+            ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR} ${NPROC_PER_NODE}
 
     elif [ "${CLUSTER_NAME}" = "vcluster" ]; then
         ${COMMAND} --nodes ${NNODES} \
@@ -33,7 +33,7 @@ if [ "${LAUNCH_MODE}" = "train" ]; then
             --partition ${GPU_TYPE} \
             --qos ${QOS} \
             ${CURR_DIR}/job_submission/train.slrm ${CURR_DIR}/${SCRIPT} \
-            ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR}
+            ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR} ${NPROC_PER_NODE}
     fi
 
 elif [ "${LAUNCH_MODE}" = "server" ]; then

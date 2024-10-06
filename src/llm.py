@@ -57,7 +57,7 @@ _LLAMA3_EXTRA_TOKENS = {
 
 # Make sure we have some tokens defined for the LM, if not defined in the model.
 # Specific for Llama3.1
-_LLAMA31_EXTRA_TOKENS = {
+_LLAMA32_EXTRA_TOKENS = {
     "pad_token": "<|finetune_right_pad_id|>",
 }
 
@@ -272,6 +272,7 @@ class LLM(torch.nn.Module):
         temperature: float = 0.0001,
         num_return_sequences: int = 1,
         to_train: bool = False,
+        use_cache: bool = True,
     ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Using the llm, generate new text.
 
@@ -298,8 +299,8 @@ class LLM(torch.nn.Module):
                         num_return_sequences=num_return_sequences,
                         output_logits=True,
                         return_dict_in_generate=True,
-                        return_legacy_cache=True,
-                        use_cache=True,
+                        return_legacy_cache=use_cache,
+                        use_cache=use_cache,
                         renormalize_logits=True,
                         eos_token_id=self.terminators,
                         pad_token_id=self.tokenizer.pad_token_id,
@@ -315,8 +316,8 @@ class LLM(torch.nn.Module):
                     num_return_sequences=num_return_sequences,
                     output_logits=True,
                     return_dict_in_generate=True,
-                    return_legacy_cache=True,
-                    use_cache=True,
+                    return_legacy_cache=use_cache,
+                    use_cache=use_cache,
                     renormalize_logits=True,
                     eos_token_id=self.terminators,
                     pad_token_id=self.tokenizer.pad_token_id,
@@ -338,7 +339,7 @@ class LLM(torch.nn.Module):
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
         answers, final_log_ps, _, actual_lens, _, _ = self.generation_pass(
-            batch, top_p=FLAGS.test_top_p, temperature=FLAGS.test_temperature, num_return_sequences=1
+            batch, top_p=FLAGS.test_top_p, temperature=FLAGS.test_temperature, num_return_sequences=1, use_cache=True
         )
         log_ps = final_log_ps / actual_lens
         loss = -torch.mean(log_ps, dim=0).detach().float()
@@ -370,18 +371,18 @@ class Llama3QA(LLM):
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
 
-class Llama31QA(LLM):
+class Llama32QA(LLM):
     """Class to implement Llama3.1."""
 
     def __init__(self, local_rank: int = 0, rank: int = 0) -> None:
-        super().__init__(_LLAMA31_EXTRA_TOKENS, local_rank, rank)
+        super().__init__(_LLAMA32_EXTRA_TOKENS, local_rank, rank)
 
-        # Chat templates for llama3.1.
+        # Chat templates for llama3.2.
         self.instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
         self.input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
         self.output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|eot_id|>"
 
-        # required for llama3.1
+        # required for llama3.2
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
 

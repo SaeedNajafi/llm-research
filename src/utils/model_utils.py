@@ -52,6 +52,7 @@ flags.DEFINE_string("sharding_strategy", "NO_SHARD", "NO_SHARD | HYBRID_SHARD | 
 flags.DEFINE_boolean("ddp", True, "is this a pure ddp run?")
 flags.DEFINE_string("llm_name", "gemma2", "gemma2 | llama3")
 
+
 def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
     """Initialize lora peft configuration from a non-lora model.
 
@@ -140,7 +141,7 @@ def load_model(
         )
         model_args["quantization_config"] = nf4_config
 
-    if FLAGS.llm_name in ["llama3", "llama3.1"]:
+    if FLAGS.llm_name in ["llama3", "llama3.2"]:
         # Load my own lm modelling code.
         model_class = LlamaForCausalLM
     else:

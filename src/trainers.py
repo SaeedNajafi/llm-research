@@ -106,6 +106,7 @@ class LossCalculator:
             temperature=FLAGS.train_temperature,
             num_return_sequences=FLAGS.rl_sample_size,
             to_train=True,
+            use_cache=True,
         )
         cleaned_samples = [text.removeprefix("assistant\n\n").removeprefix("Final Answer: ") for text in generations]
         print(cleaned_samples)

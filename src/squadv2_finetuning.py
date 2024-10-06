@@ -14,7 +14,7 @@ from torch.distributed.fsdp import FullStateDictConfig  # general model non-shar
 from torch.distributed.fsdp import StateDictType  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-from src.llm import Gemma2QA, Llama3QA, Llama31QA
+from src.llm import Gemma2QA, Llama3QA, Llama32QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.trainers import LossCalculator
 from src.utils.data_utility import create_squadv2_dataloader
@@ -70,8 +70,8 @@ def main(argv: Any) -> None:
     elif FLAGS.llm_name == "llama3":
         model = Llama3QA(local_rank, rank)
 
-    elif FLAGS.llm_name == "llama3.1":
-        model = Llama31QA(local_rank, rank)
+    elif FLAGS.llm_name == "llama3.2":
+        model = Llama32QA(local_rank, rank)
 
     if wandb_run:
         if FLAGS.use_peft:
@@ -162,6 +162,7 @@ def main(argv: Any) -> None:
                     FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
                 ):
                     merged_model.save_pretrained(deploy_dir, safe_serialization=False)
+
 
 if __name__ == "__main__":
     app.run(main)

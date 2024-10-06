@@ -10,6 +10,7 @@
 SCRIPT=$1
 CONFIG_FILE=$2
 LOG_DIR=$3
+NPROC_PER_NODE=$4
 
 # enable conda env properly.
 source ${CURR_DIR}/job_submission/env_up.sh
@@ -41,7 +42,7 @@ echo "GPUs per node: ${NUM_GPUs}"
 
 srun -N "${SLURM_NNODES}" -l \
         bash -c "TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun \
-                        --nproc-per-node=$SLURM_GPUS_ON_NODE \
+                        --nproc-per-node=$NPROC_PER_NODE \
                         --nnodes=$SLURM_JOB_NUM_NODES \
                         --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
                         --rdzv-id $RDVZ_ID \
