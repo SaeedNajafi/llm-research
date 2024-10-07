@@ -278,7 +278,10 @@ class LLM(torch.nn.Module):
 
         This will be used for inference.
         """
-        self.predict_mode_on()
+        if to_train:
+            self.train_mode_on()
+        else:
+            self.predict_mode_on()
         loaded_batch = self.data_to_device(batch, keys=["lm_input_ids_for_generation", "lm_attention_mask_for_generation"])
         input_ids = loaded_batch["lm_input_ids_for_generation"]
         attention_mask = loaded_batch["lm_attention_mask_for_generation"]
