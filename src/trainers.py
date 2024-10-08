@@ -71,6 +71,11 @@ class LossCalculator:
     ) -> torch.Tensor:
         """We have to feed the input along with new sampled outputs to train
         the policy."""
+
+        # Check what is the error at the end of the training and evaluation.
+
+        # Check why does it require a very large memory.
+
         # Implement how you can provide KL penalty with respect to the reference policy.
 
         # Test the implementations in a task.
@@ -108,8 +113,10 @@ class LossCalculator:
             to_train=True,
             use_cache=True,
         )
+        print(generations)
+        print(batch["gold_answers"])
+        print("\n\n##")
         cleaned_samples = [text.removeprefix("assistant\n\n").removeprefix("Final Answer: ") for text in generations]
-        print(cleaned_samples)
         batch_size = len(cleaned_samples) // FLAGS.rl_sample_size
         sequence_log_probs = final_log_ps.view(batch_size, FLAGS.rl_sample_size)
 

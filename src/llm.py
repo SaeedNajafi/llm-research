@@ -161,7 +161,6 @@ class LLM(torch.nn.Module):
             add_special_tokens=False,
         )
         data = {
-            "texts": texts,
             "lm_input_ids_for_generation": input_encodings_for_generation.input_ids,
             "lm_attention_mask_for_generation": input_encodings_for_generation.attention_mask,
             "row_ids": row_ids,
@@ -189,16 +188,16 @@ class LLM(torch.nn.Module):
         inference_data = self.prepare_text_for_inference(texts, row_ids, gold_answers=gold_answers)
 
         train_data = {
-            "texts": inference_data["texts"],
-            "row_ids": inference_data["row_ids"],
+            "row_ids": inference_data.pop("row_ids"),
             "lm_input_ids_for_train": input_encodings.input_ids,
             "lm_attention_mask_for_train": input_encodings.attention_mask,
-            "lm_input_ids_for_generation": inference_data["lm_input_ids_for_generation"],
-            "lm_attention_mask_for_generation": inference_data["lm_attention_mask_for_generation"],
+            "lm_input_ids_for_generation": inference_data.pop("lm_input_ids_for_generation"),
+            "lm_attention_mask_for_generation": inference_data.pop("lm_attention_mask_for_generation"),
         }
         if gold_answers is not None:
-            train_data["gold_answers"] = inference_data["gold_answers"]
+            train_data["gold_answers"] = inference_data.pop("gold_answers")
 
+        del inference_data
         return train_data
 
     def predict_mode_on(self) -> None:
