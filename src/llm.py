@@ -256,12 +256,16 @@ class LLM(torch.nn.Module):
                 prompt_mask = torch.arange(seq_len, device=self.device).expand(batch_size, seq_len) < original_len_with_pads
 
             masked_labels = masked_labels.masked_fill(prompt_mask == 1, -100)
-            sequence_log_probs, token_log_probs = decoder_only_log_of_labels(
-                logits=logits, labels=masked_labels, loss_func=self.model.loss_func
-            )
+
             if per_step_scores:
+                sequence_log_probs, token_log_probs = decoder_only_log_of_labels(
+                    logits=logits, labels=masked_labels, loss_func=self.model.loss_func, per_step_scores=True
+                )
                 return sequence_log_probs, token_log_probs, logits, masked_labels
             else:
+                sequence_log_probs = decoder_only_log_of_labels(
+                    logits=logits, labels=masked_labels, loss_func=self.model.loss_func, per_step_scores=False
+                )
                 return sequence_log_probs
 
     def generation_pass(
@@ -272,7 +276,9 @@ class LLM(torch.nn.Module):
         num_return_sequences: int = 1,
         to_train: bool = False,
         use_cache: bool = True,
-    ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        per_step_scores: bool = False,
+        iterative_rl_sampling: bool = False,
+    ) -> Any:
         """Using the llm, generate new text.
 
         This will be used for inference.
@@ -291,7 +297,28 @@ class LLM(torch.nn.Module):
                 # with torch.no_grad():
                 #    self.model.forward(input_ids=input_ids)
                 with FSDP.summon_full_params(self.model, writeback=False, recurse=False):
-                    predictions_output = self.model.generate(
+                    results = list(
+                        self.model.generate(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            do_sample=True,
+                            top_p=top_p,
+                            temperature=temperature,
+                            max_length=FLAGS.input_max_length + FLAGS.output_max_length,
+                            num_return_sequences=num_return_sequences,
+                            output_logits=True,
+                            return_dict_in_generate=True,
+                            return_legacy_cache=use_cache,
+                            use_cache=use_cache,
+                            renormalize_logits=True,
+                            eos_token_id=self.terminators,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            iterative_rl_sampling=iterative_rl_sampling,
+                        )
+                    )
+            elif self.distributed_strategy == "ddp":
+                results = list(
+                    self.model.module.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         do_sample=True,
@@ -306,44 +333,53 @@ class LLM(torch.nn.Module):
                         renormalize_logits=True,
                         eos_token_id=self.terminators,
                         pad_token_id=self.tokenizer.pad_token_id,
+                        iterative_rl_sampling=iterative_rl_sampling,
                     )
-            elif self.distributed_strategy == "ddp":
-                predictions_output = self.model.module.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    do_sample=True,
-                    top_p=top_p,
-                    temperature=temperature,
-                    max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                    num_return_sequences=num_return_sequences,
-                    output_logits=True,
-                    return_dict_in_generate=True,
-                    return_legacy_cache=use_cache,
-                    use_cache=use_cache,
-                    renormalize_logits=True,
-                    eos_token_id=self.terminators,
-                    pad_token_id=self.tokenizer.pad_token_id,
                 )
 
+            if not iterative_rl_sampling:
+                predictions_output = results[0]
+                return self.find_log_information(predictions_output, input_ids, per_step_scores)
+            else:
+                # This if for iterative computation.
+                outputs = []
+                for result in results:
+                    predictions_output = result
+                    outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores))
+                return outputs
+
+    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor, per_step_scores: float) -> Any:
+        """Helper function to find generation logits and sequences."""
         prompt_len = input_ids.size()[1]
         selected_samples = predictions_output.sequences[:, prompt_len:]
         predictions_str = self.tokenizer.batch_decode(selected_samples, skip_special_tokens=True)
         logits_list = list(predictions_output.logits)
         logits = torch.stack(logits_list, dim=1)
         labels_to_consider = selected_samples.masked_fill(selected_samples == self.tokenizer.pad_token_id, -100)
-        final_log_ps, token_final_log_ps = log_of_labels(
-            logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func
-        )
-        actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
-        # Average log probs per token (length normalization).
-        return predictions_str, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider
+        if per_step_scores:
+            final_log_ps, token_final_log_ps = log_of_labels(
+                logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=True
+            )
+            actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
+            # Average log probs per token (length normalization).
+            return predictions_str, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider
+        else:
+            actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
+            final_log_ps = log_of_labels(
+                logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=False
+            )
+            return predictions_str, final_log_ps / actual_lens
 
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
-        answers, final_log_ps, _, actual_lens, _, _ = self.generation_pass(
-            batch, top_p=FLAGS.test_top_p, temperature=FLAGS.test_temperature, num_return_sequences=1, use_cache=True
+        answers, log_ps = self.generation_pass(
+            batch,
+            top_p=FLAGS.test_top_p,
+            temperature=FLAGS.test_temperature,
+            num_return_sequences=1,
+            use_cache=True,
+            per_step_scores=False,
         )
-        log_ps = final_log_ps / actual_lens
         loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().float().cpu().numpy()
         for idx, answer in enumerate(answers):

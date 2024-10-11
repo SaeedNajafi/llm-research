@@ -19,20 +19,6 @@ def normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:
     return 2 * (rewards - rewards_min) / (rewards_max - rewards_min + 1e-12) - 1.0
 
 
-def mml_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:
-    """Perform normalization of the rewards based on MML objective. MML
-    objective tends to apply softmax over the log probability which is the
-    reward function.
-
-    The rewards should be scaled by the number of samples but that will
-    be canceled out if we divide the loss by the number of samples per
-    example.
-    """
-    batch_size, num_samples = rewards.size()
-    assert num_samples > 1
-    return torch.nn.functional.softmax(rewards, dim=1)
-
-
 def rloo_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:
     """Leave-one-out normalization."""
     batch_size, num_samples = rewards.size()

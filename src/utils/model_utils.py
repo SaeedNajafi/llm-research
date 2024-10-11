@@ -359,7 +359,9 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+def log_of_labels(
+    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss, per_step_scores: bool = False
+) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits.
 
     This function is also useful for both Roberta model and getting
@@ -380,7 +382,9 @@ def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.n
 
     # good_log_p now has the log probability of the output
     # sequence tokens corresponding to the labels at the [MASK] location.
-    return torch.sum(good_log_p, dim=1), good_log_p
+    if per_step_scores:
+        return torch.sum(good_log_p, dim=1), good_log_p
+    return torch.sum(good_log_p, dim=1)
 
 
 def encoder_decoder_log_of_labels(
@@ -412,7 +416,7 @@ def encoder_decoder_log_of_labels(
 
 
 def decoder_only_log_of_labels(
-    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss
+    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss, per_step_scores: bool = False
 ) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits."""
 
@@ -420,7 +424,7 @@ def decoder_only_log_of_labels(
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
-    return log_of_labels(shift_logits, shift_labels, loss_func)
+    return log_of_labels(shift_logits, shift_labels, loss_func, per_step_scores)
 
 
 def lm_logits(

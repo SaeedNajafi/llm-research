@@ -8,7 +8,7 @@ from torch.distributions import Categorical
 
 from src.llm import LLM
 from src.metrics import RewardCalculator
-from src.utils.rl_utils import mml_normalize, normalize, rloo_normalize, z_scoring
+from src.utils.rl_utils import normalize, rloo_normalize, z_scoring
 
 FLAGS = flags.FLAGS
 
@@ -49,9 +49,6 @@ class LossCalculator:
 
         elif FLAGS.reward_normalization_type == "normalize":
             return normalize(rewards)
-
-        elif FLAGS.reward_normalization_type == "mml_normalize":
-            return mml_normalize(rewards)
 
         elif FLAGS.reward_normalization_type == "rloo_normalize":
             return rloo_normalize(rewards)
@@ -163,11 +160,93 @@ class LossCalculator:
 
         return loss
 
+    def maximum_marginal_likelihood_loss(
+        self, batch: torch.utils.data.Dataset, iterative_finetuning: bool = False
+    ) -> torch.Tensor:
+        """Use maximum marginal likelihood training to compute the loss."""
+        outputs = self.policy_lm.generation_pass(
+            batch,
+            top_p=FLAGS.train_top_p,
+            temperature=FLAGS.train_temperature,
+            num_return_sequences=FLAGS.rl_sample_size,
+            to_train=True,
+            use_cache=True,
+            per_step_scores=False,
+            iterative_rl_sampling=True,
+        )
+        generations = []
+        final_log_ps = []
+        for output in outputs:
+            generation_per_batch, final_log_p_per_batch = output
+            final_log_ps.append(final_log_p_per_batch)
+            generations.append(generation_per_batch)
+
+        sequence_log_probs = torch.stack(final_log_ps, dim=1)
+        batch_size = sequence_log_probs.size()[0]
+
+        # Compute the rewards.
+        gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
+        samples = []
+        for b_idx in range(batch_size):
+            sample_arr = []
+            for sample_idx in range(FLAGS.rl_sample_size):
+                sample_arr.append(generations[sample_idx][b_idx])
+            samples.append(sample_arr)
+
+        # These are full sequence returns.
+        sample_returns = self.reward_calculator.compute_rewards(gold_answers, samples)
+        returns = torch.tensor(sample_returns, dtype=torch.float64, device=self.policy_lm.device)
+        if not iterative_finetuning:
+            # This is the MML objective.
+            log_of_returns = torch.log(returns + 1e-12)
+            loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_returns, dim=1), dim=0)
+            return loss
+        else:
+            # This is iterative fine-tuning.
+            # Find the sample with the highest return.
+            _, max_indices = torch.max(returns, dim=1, keepdim=True)
+            selected_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices)
+            loss = -torch.mean(
+                selected_log_probs.view(
+                    batch_size,
+                ),
+                dim=0,
+            )
+            return loss
+
+    def hard_em_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """Use maximum marginal likelihood training to compute the loss."""
+        generations, final_log_ps = self.policy_lm.generation_pass(
+            batch,
+            top_p=FLAGS.test_top_p,
+            temperature=FLAGS.test_temperature,
+            num_return_sequences=1,
+            to_train=True,
+            use_cache=True,
+            per_step_scores=False,
+            iterative_rl_sampling=False,
+        )
+        batch_size = len(generations)
+        sequence_log_probs = final_log_ps.view(
+            batch_size,
+        )
+        loss = -torch.mean(sequence_log_probs, dim=0)
+        return loss
+
     def train(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Based on the train objective type, call the right loss function."""
 
         if self.objective_type == "teacher_forcing":
             return self.teacher_forcing_loss(batch)
+
+        elif self.objective_type == "mml":
+            return self.maximum_marginal_likelihood_loss(batch)
+
+        elif self.objective_type == "hard_em":
+            return self.hard_em_loss(batch)
+
+        elif self.objective_type == "iterative_finetuning":
+            return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
 
         elif self.objective_type == "reinforce":
             return self.on_policy_rl_loss(batch)

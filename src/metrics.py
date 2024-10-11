@@ -205,6 +205,8 @@ no_answer_indications = [
     "none are mentioned in passage",
 ]
 
+split_on_keywords = ["**final answer:**", "final answer:", "answer:"]
+
 
 def postprocess_qa(txt: str) -> str:
     txt = str(txt)
@@ -216,23 +218,16 @@ def postprocess_qa(txt: str) -> str:
             return txt
 
     for prefix in prefixes_txt_to_remove:
-        txt = txt.removeprefix(prefix)
+        txt = txt.removeprefix(prefix).strip()
 
-    try:
-        txt = txt.split("final answer:")[1]
-    except Exception:
-        try:
-            txt = txt.split("answer:")[1]
-        except Exception:
-            try:
-                txt = txt.split("**final answer:**")[1]
-            except Exception:
-                pass
+    for keyword in split_on_keywords:
+        if keyword in txt:
+            txt = txt.split(keyword)[1].strip()
 
     for to_replace in replace_with_space:
-        txt = txt.replace(to_replace, "")
-    txt = txt.strip()
-    return txt
+        txt = txt.replace(to_replace, "").strip()
+
+    return txt.strip()
 
 
 def normalize_answer(text: str) -> str:

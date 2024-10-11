@@ -8,12 +8,12 @@ import os
 from typing import Any
 
 import torch
-import wandb
 from absl import app, flags
 from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import StateDictType  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
+import wandb
 from src.llm import Gemma2QA, Llama3QA, Llama32QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.trainers import LossCalculator
@@ -77,7 +77,7 @@ def main(argv: Any) -> None:
         if FLAGS.use_peft:
             wandb_run.config.update(model.peft_config)
 
-    if FLAGS.objective_type in ["teacher_forcing", "reinforce"]:
+    if FLAGS.objective_type in ["teacher_forcing", "reinforce", "mml", "hard_em", "iml", "iterative_finetuning"]:
         loss_calculator = LossCalculator(policy_lm=model, objective_type=FLAGS.objective_type, reward_name="squadv2_metrics_f1")
 
     if FLAGS.mode == "train":
