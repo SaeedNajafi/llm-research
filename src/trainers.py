@@ -13,7 +13,10 @@ from src.utils.rl_utils import normalize, rloo_normalize, z_scoring
 FLAGS = flags.FLAGS
 
 flags.DEFINE_integer(
-    "rl_sample_size", 4, "The number of samples to generate from the policy used for both on/off-policy learnings."
+    "rl_sample_size", 8, "The number of samples to generate from the policy used for both on/off-policy learnings."
+)
+flags.DEFINE_integer(
+    "iterative_chunk_size", 2, "The number of return sequences to generate from LLM at the same time in parallel."
 )
 flags.DEFINE_boolean("with_baseline", False, "Whether to use the baseline reward in RL objective.")
 flags.DEFINE_string("reward_normalization_type", "zscore", "zscore | mml_normalize | normalize | rloo_normalize | no_normalize")
@@ -164,33 +167,39 @@ class LossCalculator:
         self, batch: torch.utils.data.Dataset, iterative_finetuning: bool = False
     ) -> torch.Tensor:
         """Use maximum marginal likelihood training to compute the loss."""
-        outputs = self.policy_lm.generation_pass(
-            batch,
-            top_p=FLAGS.train_top_p,
-            temperature=FLAGS.train_temperature,
-            num_return_sequences=FLAGS.rl_sample_size,
-            to_train=True,
-            use_cache=True,
-            per_step_scores=False,
-            iterative_rl_sampling=True,
-        )
+        assert FLAGS.rl_sample_size > 1
+        num_iterative_calls = FLAGS.rl_sample_size // FLAGS.iterative_chunk_size
         generations = []
         final_log_ps = []
-        for output in outputs:
-            generation_per_batch, final_log_p_per_batch = output
-            final_log_ps.append(final_log_p_per_batch)
-            generations.append(generation_per_batch)
+        for call_idx in range(num_iterative_calls):
+            generations_per_call, final_log_ps_per_call = self.policy_lm.generation_pass(
+                batch,
+                top_p=FLAGS.train_top_p,
+                temperature=FLAGS.train_temperature,
+                num_return_sequences=FLAGS.iterative_chunk_size,
+                to_train=True,
+                use_cache=True,
+                per_step_scores=False,
+                iterative_rl_sampling=False,
+            )
+            batch_generations_per_call = []
+            batch_size = len(generations_per_call) // FLAGS.iterative_chunk_size
+            for b_idx in range(batch_size):
+                batch_generations_per_call.append(
+                    [generations_per_call[b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size]]
+                )
+            final_log_ps.append(final_log_ps_per_call.view(batch_size, FLAGS.iterative_chunk_size))
+            generations.append(batch_generations_per_call)
 
-        sequence_log_probs = torch.stack(final_log_ps, dim=1)
+        sequence_log_probs = torch.cat(final_log_ps, dim=1)
         batch_size = sequence_log_probs.size()[0]
-
         # Compute the rewards.
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
         samples = []
         for b_idx in range(batch_size):
             sample_arr = []
-            for sample_idx in range(FLAGS.rl_sample_size):
-                sample_arr.append(generations[sample_idx][b_idx])
+            for call_idx in range(num_iterative_calls):
+                sample_arr.extend(generations[call_idx][b_idx][0])
             samples.append(sample_arr)
 
         # These are full sequence returns.
@@ -204,8 +213,9 @@ class LossCalculator:
         else:
             # This is iterative fine-tuning.
             # Find the sample with the highest return.
-            _, max_indices = torch.max(returns, dim=1, keepdim=True)
-            selected_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices)
+            max_values, max_indices = torch.max(returns, dim=1, keepdim=True)
+            return_masks = (max_values > 0.5).float()
+            selected_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices) * return_masks
             loss = -torch.mean(
                 selected_log_probs.view(
                     batch_size,

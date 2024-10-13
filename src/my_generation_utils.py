@@ -654,7 +654,6 @@ class MyGenerationMixin(GenerationMixin):
                     is_encoder_decoder=self.config.is_encoder_decoder,
                     **model_kwargs,
                 )
-
                 # 12. run sample (it degenerates to greedy search when `generation_config.do_sample=False`)
                 result = self._sample(
                     input_ids,

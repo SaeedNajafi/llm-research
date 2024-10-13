@@ -16,8 +16,8 @@
 --max_train_step=0
 --max_eval_step=0
 --num_epochs=5
---steps_before_evaluation=64
---gradient_accumulation_steps=4
+--steps_before_evaluation=32
+--gradient_accumulation_steps=2
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation
@@ -30,7 +30,7 @@
 --train_temperature=1.0
 --test_temperature=0.0001
 --input_max_length=1024
---output_max_length=256
+--output_max_length=128
 --lr=1e-5
 --lr_min=1e-6
 --weight_decay=0.001
@@ -43,3 +43,4 @@
 --ddp
 --objective_type=mml
 --rl_sample_size=8
+--iterative_chunk_size=1
