@@ -47,4 +47,4 @@ srun -N "${SLURM_NNODES}" -l \
                         --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
                         --rdzv-id $RDVZ_ID \
                         --rdzv-backend c10d \
-                        ${SCRIPT} --flagfile ${CONFIG_FILE} >> ${LOG_PATH} 2>&1"
+                        ${SCRIPT} --flagfile ${CONFIG_FILE} > ${LOG_PATH} 2>&1"

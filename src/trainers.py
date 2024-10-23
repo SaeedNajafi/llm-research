@@ -164,6 +164,109 @@ class LossCalculator:
 
     #     return loss
 
+    def reinforce_loss(
+        self, batch: torch.utils.data.Dataset
+    ) -> torch.Tensor:
+        """Use reinforce with per-step rewards to compute the loss."""
+        assert FLAGS.rl_sample_size > 1
+        num_iterative_calls = FLAGS.rl_sample_size // FLAGS.iterative_chunk_size
+        generations = []
+        partial_generations = []
+        final_log_ps = []
+        actual_lens = []
+        labels_to_consider = []
+        token_final_log_ps = []
+        logits = []
+        for call_idx in range(num_iterative_calls):
+            llm_generation_outputs = self.policy_lm.generation_pass(
+                batch,
+                top_p=FLAGS.train_top_p,
+                temperature=FLAGS.train_temperature,
+                num_return_sequences=FLAGS.iterative_chunk_size,
+                to_train=True,
+                use_cache=True,
+                per_step_scores=True,
+                iterative_rl_sampling=False,
+                generate_partial_sequences=True,
+            )
+            generations_per_call = llm_generation_outputs[0].predictions_str
+            final_log_ps_per_call = llm_generation_outputs[0].final_log_ps
+            actual_lens_per_call = llm_generation_outputs[0].actual_lens
+            labels_to_consider_per_call = llm_generation_outputs[0].labels_to_consider
+            token_final_log_ps_per_call = llm_generation_outputs[0].token_final_log_ps
+            partial_generations_per_call = llm_generation_outputs[0].partially_generated_sequences
+            logits_per_call = llm_generation_outputs[0].logits
+            _, seq_len, vocab_size = logits_per_call.size()
+            batch_generations_per_call = []
+            batch_partial_generations_per_call = []
+            batch_size = len(generations_per_call) // FLAGS.iterative_chunk_size
+            for b_idx in range(batch_size):
+                batch_generations_per_call.append(
+                    [generations_per_call[b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size]]
+                )
+                batch_partial_generations_per_call.append(
+                    [partial_generations_per_call[b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size]]
+                )
+            final_log_ps.append(final_log_ps_per_call.view(batch_size, FLAGS.iterative_chunk_size))
+            actual_lens.append(actual_lens_per_call.view(batch_size, FLAGS.iterative_chunk_size))
+            labels_to_consider.append(labels_to_consider_per_call.view(batch_size, FLAGS.iterative_chunk_size, -1))
+            token_final_log_ps.append(token_final_log_ps_per_call.view(batch_size, FLAGS.iterative_chunk_size, -1))
+            logits.append(logits_per_call.view(batch_size, FLAGS.iterative_chunk_size, seq_len, vocab_size))
+            generations.append(batch_generations_per_call)
+            partial_generations.append(batch_partial_generations_per_call)
+        sequence_log_probs = torch.cat(final_log_ps, dim=1)
+        actual_lens = torch.cat(actual_lens, dim=1)
+        batch_size = sequence_log_probs.size()[0]
+        samples = []
+        final_labels_to_consider = []
+        token_log_ps = []
+        final_logits = []
+        partial_samples = []
+        for b_idx in range(batch_size):
+            sample_arr = []
+            labels_to_consider_arr = []
+            token_log_ps_arr = []
+            logits_arr = []
+            partial_samples_arr = []
+            for call_idx in range(num_iterative_calls):
+                sample_arr.extend(generations[call_idx][b_idx][0])
+                for chunk_idx in range(FLAGS.iterative_chunk_size):
+                    labels_to_consider_arr.append(labels_to_consider[call_idx][b_idx, chunk_idx, :])
+                    token_log_ps_arr.append(token_final_log_ps[call_idx][b_idx, chunk_idx, :])
+                    logits_arr.append(logits[call_idx][b_idx, chunk_idx, :, :])
+                    partial_samples_arr.append(partial_generations[call_idx][b_idx][0][chunk_idx])
+
+            final_labels_to_consider.append(labels_to_consider_arr)
+            token_log_ps.append(token_log_ps_arr)
+            final_logits.append(logits_arr)
+            samples.append(sample_arr)
+            partial_samples.append(partial_samples_arr)
+
+        # These are full sequence returns.
+        # Compute the rewards.
+        gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
+        per_step_returns = self.reward_calculator.compute_returns(gold_answers, partial_samples)
+        per_step_returns = torch.tensor(per_step_returns, dtype=torch.float64, device=self.policy_lm.device)
+        if not iterative_finetuning:
+            # This is the MML objective.
+            log_of_returns = torch.log(returns + 1e-12)
+            loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_returns, dim=1), dim=0)
+            return loss
+        else:
+            # This is iterative fine-tuning.
+            # Find the sample with the highest return.
+            max_values, max_indices = torch.max(returns, dim=1, keepdim=True)
+            return_masks = (max_values > 0.5).float()
+            selected_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices) * return_masks
+            loss = -torch.mean(
+                selected_log_probs.view(
+                    batch_size,
+                ),
+                dim=0,
+            )
+            return loss
+
+
     def maximum_marginal_likelihood_loss(
         self, batch: torch.utils.data.Dataset, iterative_finetuning: bool = False
     ) -> torch.Tensor:
@@ -262,3 +365,6 @@ class LossCalculator:
 
         elif self.objective_type == "iterative_finetuning":
             return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
+
+        elif self.objective_type == "reinforce":
+            return self.reinforce_loss(batch)

@@ -289,6 +289,7 @@ class LLM(torch.nn.Module):
         use_cache: bool = True,
         per_step_scores: bool = False,
         iterative_rl_sampling: bool = False,
+        generate_partial_sequences: bool = False,
     ) -> List[LLMGenerationOutput]:
         """Using the llm, generate new text.
 
@@ -351,14 +352,27 @@ class LLM(torch.nn.Module):
             outputs = []
             for result in results:
                 predictions_output = result
-                outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores))
+                outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores, generate_partial_sequences))
             return outputs
 
-    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor, per_step_scores: float) -> LLMGenerationOutput:
+    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor,
+                             per_step_scores: bool, generate_partial_sequences: bool) -> LLMGenerationOutput:
         """Helper function to find generation logits and sequences."""
         prompt_len = input_ids.size()[1]
         selected_samples = predictions_output.sequences[:, prompt_len:]
         predictions_str = self.tokenizer.batch_decode(selected_samples, skip_special_tokens=True)
+        if generate_partial_sequences:
+            batch_size, seq_len = selected_samples.size()
+            partial_sequences = []
+            for b_index in range(batch_size):
+                partial_sequences_per_batch = []
+                for seq_index in range(seq_len):
+                    if selected_samples[b_index, seq_index] == self.tokenizer.pad_token_id:
+                        break
+                    prefix = self.tokenizer.decode(selected_samples[b_index, 0:seq_index+1], skip_special_tokens=False)
+                    partial_sequences_per_batch.append(prefix)
+                partial_sequences.append(partial_sequences_per_batch)
+
         logits_list = list(predictions_output.logits)
         logits = torch.stack(logits_list, dim=1)
         labels_to_consider = selected_samples.masked_fill(selected_samples == self.tokenizer.pad_token_id, -100)
@@ -381,6 +395,9 @@ class LLM(torch.nn.Module):
             llm_generation_output = LLMGenerationOutput(predictions_str=predictions_str,
                                                         final_log_ps=final_log_ps / actual_lens)
         
+        if generate_partial_sequences:
+            llm_generation_output.partially_generated_sequences = partial_sequences
+
         return llm_generation_output
 
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
