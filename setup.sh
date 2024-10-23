@@ -30,7 +30,6 @@ conda install -c nvidia/label/cuda-12.1.1 cuda -y
 conda install -c nvidia/label/cuda-12.1.1 cuda-nvcc -y
 conda install -c nvidia/label/cuda-12.1.1 cuda-toolkit -y
 conda install -c conda-forge cudnn -y
-conda install rapidsai::rapids -y
 
 # Get rid of cluster python.
 module --force purge

@@ -22,6 +22,7 @@ from src.utils.model_utils import (
     print_model_size,
     shard_model,
 )
+from dataclasses import dataclass
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -61,6 +62,16 @@ _LLAMA32_EXTRA_TOKENS = {
     "pad_token": "<|finetune_right_pad_id|>",
 }
 
+
+@dataclass
+class LLMGenerationOutput:
+    predictions_str: List[str] = None
+    final_log_ps: torch.FloatTensor = None
+    token_final_log_ps: Optional[torch.FloatTensor] = None
+    actual_lens: Optional[torch.LongTensor] = None
+    logits: Optional[torch.FloatTensor] = None
+    labels_to_consider: Optional[torch.FloatTensor] = None
+    partially_generated_sequences: Optional[List[List[str]]] = None
 
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
@@ -278,7 +289,7 @@ class LLM(torch.nn.Module):
         use_cache: bool = True,
         per_step_scores: bool = False,
         iterative_rl_sampling: bool = False,
-    ) -> Any:
+    ) -> List[LLMGenerationOutput]:
         """Using the llm, generate new text.
 
         This will be used for inference.
@@ -337,18 +348,13 @@ class LLM(torch.nn.Module):
                     )
                 )
 
-            if not iterative_rl_sampling:
-                predictions_output = results[0]
-                return self.find_log_information(predictions_output, input_ids, per_step_scores)
-            else:
-                # This if for iterative computation.
-                outputs = []
-                for result in results:
-                    predictions_output = result
-                    outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores))
-                return outputs
+            outputs = []
+            for result in results:
+                predictions_output = result
+                outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores))
+            return outputs
 
-    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor, per_step_scores: float) -> Any:
+    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor, per_step_scores: float) -> LLMGenerationOutput:
         """Helper function to find generation logits and sequences."""
         prompt_len = input_ids.size()[1]
         selected_samples = predictions_output.sequences[:, prompt_len:]
@@ -361,18 +367,25 @@ class LLM(torch.nn.Module):
                 logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=True
             )
             actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
-            # Average log probs per token (length normalization).
-            return predictions_str, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider
+            llm_generation_output = LLMGenerationOutput(predictions_str=predictions_str,
+                                                        final_log_ps=final_log_ps,
+                                                        token_final_log_ps=token_final_log_ps,
+                                                        actual_lens=actual_lens,
+                                                        logits=logits,
+                                                        labels_to_consider=labels_to_consider)
         else:
             actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
             final_log_ps = log_of_labels(
                 logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=False
             )
-            return predictions_str, final_log_ps / actual_lens
+            llm_generation_output = LLMGenerationOutput(predictions_str=predictions_str,
+                                                        final_log_ps=final_log_ps / actual_lens)
+        
+        return llm_generation_output
 
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
-        answers, log_ps = self.generation_pass(
+        llm_generation_outputs = self.generation_pass(
             batch,
             top_p=FLAGS.test_top_p,
             temperature=FLAGS.test_temperature,
@@ -380,6 +393,8 @@ class LLM(torch.nn.Module):
             use_cache=True,
             per_step_scores=False,
         )
+        answers = llm_generation_outputs[0].predictions_str
+        log_ps = llm_generation_outputs[0].final_log_ps
         loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().float().cpu().numpy()
         for idx, answer in enumerate(answers):

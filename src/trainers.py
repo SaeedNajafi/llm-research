@@ -102,66 +102,67 @@ class LossCalculator:
         # Should we implement the soft actor-critic?
         pass
 
-    def on_policy_rl_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
-        """This is the function to sample from the same policy and train it
-        with RL loss."""
-        generations, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider = self.policy_lm.generation_pass(
-            batch,
-            top_p=FLAGS.train_top_p,
-            temperature=FLAGS.train_temperature,
-            num_return_sequences=FLAGS.rl_sample_size,
-            to_train=True,
-            use_cache=True,
-        )
-        print(generations)
-        print(batch["gold_answers"])
-        print("\n\n##")
-        cleaned_samples = [text.removeprefix("assistant\n\n").removeprefix("Final Answer: ") for text in generations]
-        batch_size = len(cleaned_samples) // FLAGS.rl_sample_size
-        sequence_log_probs = final_log_ps.view(batch_size, FLAGS.rl_sample_size)
 
-        # Compute the rewards.
-        gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
-        samples = [
-            cleaned_samples[b_idx * FLAGS.rl_sample_size : (b_idx + 1) * FLAGS.rl_sample_size] for b_idx in range(batch_size)
-        ]
-        sample_rewards = self.reward_calculator.compute_rewards(gold_answers, samples)
-        rewards = torch.tensor(sample_rewards, dtype=torch.float64, device=self.policy_lm.device)
+    # def on_policy_rl_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+    #     """This is the function to sample from the same policy and train it
+    #     with RL loss."""
+    #     generations, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider = self.policy_lm.generation_pass(
+    #         batch,
+    #         top_p=FLAGS.train_top_p,
+    #         temperature=FLAGS.train_temperature,
+    #         num_return_sequences=FLAGS.rl_sample_size,
+    #         to_train=True,
+    #         use_cache=True,
+    #     )
+    #     print(generations)
+    #     print(batch["gold_answers"])
+    #     print("\n\n##")
+    #     cleaned_samples = [text.removeprefix("assistant\n\n").removeprefix("Final Answer: ") for text in generations]
+    #     batch_size = len(cleaned_samples) // FLAGS.rl_sample_size
+    #     sequence_log_probs = final_log_ps.view(batch_size, FLAGS.rl_sample_size)
 
-        # Normalize the rewards.
-        normalized_rewards = self.normalize_rewards(rewards)
+    #     # Compute the rewards.
+    #     gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
+    #     samples = [
+    #         cleaned_samples[b_idx * FLAGS.rl_sample_size : (b_idx + 1) * FLAGS.rl_sample_size] for b_idx in range(batch_size)
+    #     ]
+    #     sample_rewards = self.reward_calculator.compute_rewards(gold_answers, samples)
+    #     rewards = torch.tensor(sample_rewards, dtype=torch.float64, device=self.policy_lm.device)
 
-        # Subtract the baseline value of the rewards.
-        if FLAGS.with_baseline:
-            # mean pulling over the best rewards per example.
-            max_normalized_rewards, _ = torch.max(normalized_rewards, dim=1, keepdim=True)
-            normalized_rewards -= self.baseline_reward
+    #     # Normalize the rewards.
+    #     normalized_rewards = self.normalize_rewards(rewards)
 
-            new_baseline_reward = torch.mean(torch.mean(max_normalized_rewards, dim=1), dim=0)
-            self.baseline_reward = (
-                FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
-            )
+    #     # Subtract the baseline value of the rewards.
+    #     if FLAGS.with_baseline:
+    #         # mean pulling over the best rewards per example.
+    #         max_normalized_rewards, _ = torch.max(normalized_rewards, dim=1, keepdim=True)
+    #         normalized_rewards -= self.baseline_reward
 
-        # Compute the per-step entropy if requested.
-        if FLAGS.compute_per_step_entropy:
-            entropy_masks = torch.where(labels_to_consider == -100, 0, 1)
-            distribution = Categorical(logits=logits)
-            sequence_entropy = torch.sum(distribution.entropy() * entropy_masks, dim=1) / actual_lens
-            sequence_entropy = sequence_entropy.view(batch_size, FLAGS.rl_sample_size)
+    #         new_baseline_reward = torch.mean(torch.mean(max_normalized_rewards, dim=1), dim=0)
+    #         self.baseline_reward = (
+    #             FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
+    #         )
 
-        # Compute the losses.
-        if FLAGS.reward_normalization_type == "mml_normalize":
-            loss = -torch.mean(torch.sum(sequence_log_probs * normalized_rewards, dim=1), dim=0)
-        else:
-            loss = -torch.mean(torch.mean(sequence_log_probs * normalized_rewards, dim=1), dim=0)
+    #     # Compute the per-step entropy if requested.
+    #     if FLAGS.compute_per_step_entropy:
+    #         entropy_masks = torch.where(labels_to_consider == -100, 0, 1)
+    #         distribution = Categorical(logits=logits)
+    #         sequence_entropy = torch.sum(distribution.entropy() * entropy_masks, dim=1) / actual_lens
+    #         sequence_entropy = sequence_entropy.view(batch_size, FLAGS.rl_sample_size)
 
-        if FLAGS.compute_per_step_entropy:
-            entropy_loss_part_one = -torch.mean(torch.mean(sequence_log_probs * sequence_entropy.detach(), dim=1), dim=0)
-            entropy_loss_part_two = -torch.mean(torch.mean(sequence_entropy, dim=1), dim=0)
-            entropy_loss = entropy_loss_part_one + entropy_loss_part_two
-            loss += FLAGS.entropy_coef * entropy_loss
+    #     # Compute the losses.
+    #     if FLAGS.reward_normalization_type == "mml_normalize":
+    #         loss = -torch.mean(torch.sum(sequence_log_probs * normalized_rewards, dim=1), dim=0)
+    #     else:
+    #         loss = -torch.mean(torch.mean(sequence_log_probs * normalized_rewards, dim=1), dim=0)
 
-        return loss
+    #     if FLAGS.compute_per_step_entropy:
+    #         entropy_loss_part_one = -torch.mean(torch.mean(sequence_log_probs * sequence_entropy.detach(), dim=1), dim=0)
+    #         entropy_loss_part_two = -torch.mean(torch.mean(sequence_entropy, dim=1), dim=0)
+    #         entropy_loss = entropy_loss_part_one + entropy_loss_part_two
+    #         loss += FLAGS.entropy_coef * entropy_loss
+
+    #     return loss
 
     def maximum_marginal_likelihood_loss(
         self, batch: torch.utils.data.Dataset, iterative_finetuning: bool = False
@@ -172,7 +173,7 @@ class LossCalculator:
         generations = []
         final_log_ps = []
         for call_idx in range(num_iterative_calls):
-            generations_per_call, final_log_ps_per_call = self.policy_lm.generation_pass(
+            llm_generation_outputs = self.policy_lm.generation_pass(
                 batch,
                 top_p=FLAGS.train_top_p,
                 temperature=FLAGS.train_temperature,
@@ -182,6 +183,8 @@ class LossCalculator:
                 per_step_scores=False,
                 iterative_rl_sampling=False,
             )
+            generations_per_call = llm_generation_outputs[0].predictions_str
+            final_log_ps_per_call = llm_generation_outputs[0].final_log_ps
             batch_generations_per_call = []
             batch_size = len(generations_per_call) // FLAGS.iterative_chunk_size
             for b_idx in range(batch_size):
@@ -226,7 +229,7 @@ class LossCalculator:
 
     def hard_em_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Use maximum marginal likelihood training to compute the loss."""
-        generations, final_log_ps = self.policy_lm.generation_pass(
+        llm_generation_outputs = self.policy_lm.generation_pass(
             batch,
             top_p=FLAGS.test_top_p,
             temperature=FLAGS.test_temperature,
@@ -236,6 +239,8 @@ class LossCalculator:
             per_step_scores=False,
             iterative_rl_sampling=False,
         )
+        generations = llm_generation_outputs[0].predictions_str
+        final_log_ps = llm_generation_outputs[0].final_log_ps
         batch_size = len(generations)
         sequence_log_probs = final_log_ps.view(
             batch_size,
@@ -257,6 +262,3 @@ class LossCalculator:
 
         elif self.objective_type == "iterative_finetuning":
             return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
-
-        elif self.objective_type == "reinforce":
-            return self.on_policy_rl_loss(batch)
