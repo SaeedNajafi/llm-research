@@ -57,7 +57,7 @@ _LLAMA3_EXTRA_TOKENS = {
 
 # Make sure we have some tokens defined for the LM, if not defined in the model.
 # Specific for Llama3.1
-_LLAMA31_EXTRA_TOKENS = {
+_LLAMA32_EXTRA_TOKENS = {
     "pad_token": "<|finetune_right_pad_id|>",
 }
 
@@ -65,9 +65,7 @@ _LLAMA31_EXTRA_TOKENS = {
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
 
-    def __init__(
-        self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0
-    ) -> None:
+    def __init__(self, extra_tokens: Optional[Dict[str, str]] = None, local_rank: int = 0, rank: int = 0) -> None:
         super().__init__()
 
         self.rank = rank
@@ -163,7 +161,6 @@ class LLM(torch.nn.Module):
             add_special_tokens=False,
         )
         data = {
-            "texts": texts,
             "lm_input_ids_for_generation": input_encodings_for_generation.input_ids,
             "lm_attention_mask_for_generation": input_encodings_for_generation.attention_mask,
             "row_ids": row_ids,
@@ -191,16 +188,16 @@ class LLM(torch.nn.Module):
         inference_data = self.prepare_text_for_inference(texts, row_ids, gold_answers=gold_answers)
 
         train_data = {
-            "texts": inference_data["texts"],
-            "row_ids": inference_data["row_ids"],
+            "row_ids": inference_data.pop("row_ids"),
             "lm_input_ids_for_train": input_encodings.input_ids,
             "lm_attention_mask_for_train": input_encodings.attention_mask,
-            "lm_input_ids_for_generation": inference_data["lm_input_ids_for_generation"],
-            "lm_attention_mask_for_generation": inference_data["lm_attention_mask_for_generation"],
+            "lm_input_ids_for_generation": inference_data.pop("lm_input_ids_for_generation"),
+            "lm_attention_mask_for_generation": inference_data.pop("lm_attention_mask_for_generation"),
         }
         if gold_answers is not None:
-            train_data["gold_answers"] = inference_data["gold_answers"]
+            train_data["gold_answers"] = inference_data.pop("gold_answers")
 
+        del inference_data
         return train_data
 
     def predict_mode_on(self) -> None:
@@ -259,33 +256,69 @@ class LLM(torch.nn.Module):
                 prompt_mask = torch.arange(seq_len, device=self.device).expand(batch_size, seq_len) < original_len_with_pads
 
             masked_labels = masked_labels.masked_fill(prompt_mask == 1, -100)
-            sequence_log_probs, token_log_probs = decoder_only_log_of_labels(
-                logits=logits, labels=masked_labels, loss_func=self.model.loss_func
-            )
+
             if per_step_scores:
+                sequence_log_probs, token_log_probs = decoder_only_log_of_labels(
+                    logits=logits, labels=masked_labels, loss_func=self.model.loss_func, per_step_scores=True
+                )
                 return sequence_log_probs, token_log_probs, logits, masked_labels
             else:
+                sequence_log_probs = decoder_only_log_of_labels(
+                    logits=logits, labels=masked_labels, loss_func=self.model.loss_func, per_step_scores=False
+                )
                 return sequence_log_probs
 
     def generation_pass(
-        self, batch: torch.utils.data.Dataset, top_p: float = 0.9, temperature: float = 0.0001, num_return_sequences: int = 1
-    ) -> Tuple[List[str], torch.Tensor]:
+        self,
+        batch: torch.utils.data.Dataset,
+        top_p: float = 0.9,
+        temperature: float = 0.0001,
+        num_return_sequences: int = 1,
+        to_train: bool = False,
+        use_cache: bool = True,
+        per_step_scores: bool = False,
+        iterative_rl_sampling: bool = False,
+    ) -> Any:
         """Using the llm, generate new text.
 
         This will be used for inference.
         """
-        self.predict_mode_on()
+        if to_train:
+            self.train_mode_on()
+        else:
+            self.predict_mode_on()
         loaded_batch = self.data_to_device(batch, keys=["lm_input_ids_for_generation", "lm_attention_mask_for_generation"])
         input_ids = loaded_batch["lm_input_ids_for_generation"]
         attention_mask = loaded_batch["lm_attention_mask_for_generation"]
-        with torch.no_grad():
+        with torch.set_grad_enabled(to_train):
             if self.distributed_strategy == "fsdp":
                 # these weird line is necessary
                 # https://github.com/pytorch/pytorch/issues/100069
                 # with torch.no_grad():
                 #    self.model.forward(input_ids=input_ids)
                 with FSDP.summon_full_params(self.model, writeback=False, recurse=False):
-                    predictions_output = self.model.generate(
+                    results = list(
+                        self.model.generate(
+                            input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            do_sample=True,
+                            top_p=top_p,
+                            temperature=temperature,
+                            max_length=FLAGS.input_max_length + FLAGS.output_max_length,
+                            num_return_sequences=num_return_sequences,
+                            output_logits=True,
+                            return_dict_in_generate=True,
+                            return_legacy_cache=use_cache,
+                            use_cache=use_cache,
+                            renormalize_logits=True,
+                            eos_token_id=self.terminators,
+                            pad_token_id=self.tokenizer.pad_token_id,
+                            iterative_rl_sampling=iterative_rl_sampling,
+                        )
+                    )
+            elif self.distributed_strategy == "ddp":
+                results = list(
+                    self.model.module.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         do_sample=True,
@@ -295,45 +328,57 @@ class LLM(torch.nn.Module):
                         num_return_sequences=num_return_sequences,
                         output_logits=True,
                         return_dict_in_generate=True,
-                        use_cache=True,
+                        return_legacy_cache=use_cache,
+                        use_cache=use_cache,
                         renormalize_logits=True,
                         eos_token_id=self.terminators,
                         pad_token_id=self.tokenizer.pad_token_id,
+                        iterative_rl_sampling=iterative_rl_sampling,
                     )
-            elif self.distributed_strategy == "ddp":
-                predictions_output = self.model.module.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    do_sample=True,
-                    top_p=top_p,
-                    temperature=temperature,
-                    max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                    num_return_sequences=num_return_sequences,
-                    output_logits=True,
-                    return_dict_in_generate=True,
-                    use_cache=True,
-                    renormalize_logits=True,
-                    eos_token_id=self.terminators,
-                    pad_token_id=self.tokenizer.pad_token_id,
                 )
 
+            if not iterative_rl_sampling:
+                predictions_output = results[0]
+                return self.find_log_information(predictions_output, input_ids, per_step_scores)
+            else:
+                # This if for iterative computation.
+                outputs = []
+                for result in results:
+                    predictions_output = result
+                    outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores))
+                return outputs
+
+    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor, per_step_scores: float) -> Any:
+        """Helper function to find generation logits and sequences."""
         prompt_len = input_ids.size()[1]
         selected_samples = predictions_output.sequences[:, prompt_len:]
         predictions_str = self.tokenizer.batch_decode(selected_samples, skip_special_tokens=True)
         logits_list = list(predictions_output.logits)
         logits = torch.stack(logits_list, dim=1)
         labels_to_consider = selected_samples.masked_fill(selected_samples == self.tokenizer.pad_token_id, -100)
-        final_log_ps, token_final_log_ps = log_of_labels(
-            logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func
-        )
-        actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
-        # Average log probs per token (length normalization).
-        return predictions_str, final_log_ps / actual_lens
+        if per_step_scores:
+            final_log_ps, token_final_log_ps = log_of_labels(
+                logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=True
+            )
+            actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
+            # Average log probs per token (length normalization).
+            return predictions_str, final_log_ps, token_final_log_ps, actual_lens, logits, labels_to_consider
+        else:
+            actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
+            final_log_ps = log_of_labels(
+                logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=False
+            )
+            return predictions_str, final_log_ps / actual_lens
 
     def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
         """The main prediction loop."""
         answers, log_ps = self.generation_pass(
-            batch, top_p=FLAGS.test_top_p, temperature=FLAGS.test_temperature, num_return_sequences=1
+            batch,
+            top_p=FLAGS.test_top_p,
+            temperature=FLAGS.test_temperature,
+            num_return_sequences=1,
+            use_cache=True,
+            per_step_scores=False,
         )
         loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().float().cpu().numpy()
@@ -364,18 +409,18 @@ class Llama3QA(LLM):
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
 
-class Llama31QA(LLM):
+class Llama32QA(LLM):
     """Class to implement Llama3.1."""
 
     def __init__(self, local_rank: int = 0, rank: int = 0) -> None:
-        super().__init__(_LLAMA31_EXTRA_TOKENS, local_rank, rank)
+        super().__init__(_LLAMA32_EXTRA_TOKENS, local_rank, rank)
 
-        # Chat templates for llama3.1.
+        # Chat templates for llama3.2.
         self.instruction_template = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{instruction} <|eot_id|>"
         self.input_template = "<|start_header_id|>user<|end_header_id|>\n\n{input} <|eot_id|>"
         self.output_template = "<|start_header_id|>assistant<|end_header_id|>\n\n{output} <|eot_id|>"
 
-        # required for llama3.1
+        # required for llama3.2
         self.terminators = [self.tokenizer.eos_token_id, self.tokenizer.convert_tokens_to_ids("<|eot_id|>")]
 
 

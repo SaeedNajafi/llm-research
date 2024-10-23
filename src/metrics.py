@@ -15,12 +15,15 @@ from typing import Any, Dict, List
 import pandas as pd
 import torch
 from absl import app, flags
+
 # from llm2vec import LLM2Vec
-from peft import PeftModel
+# from peft import PeftModel
 from sentence_transformers import SentenceTransformer
-from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 from src.utils.general_utils import clear_gpu_cache
+
+# from transformers import AutoConfig, AutoModel, AutoTokenizer
+
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
@@ -71,9 +74,9 @@ class QAMetricModel:
         self.batch_size = batch_size
         self.metric_type = metric_type
         self.instruction = "Retrieve Wikipedia passages that answer the question."
-        #if self.metric_type == "llm2vec":
+        # if self.metric_type == "llm2vec":
         #    self.metric_model = load_llm2vec(self.device)
-        #elif self.metric_type == "sentence_t5":
+        # elif self.metric_type == "sentence_t5":
         if self.metric_type == "sentence_t5":
             self.metric_model = SentenceTransformer(self.sentence_t5_model_id, device=self.device).eval()
 
@@ -142,9 +145,10 @@ class QAMetricModel:
 
 qa_metric_model = None
 
+regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
+
 
 def remove_articles(text: str) -> str:
-    regex = re.compile(r"\b(a|an|the)\b", re.UNICODE)
     return re.sub(regex, " ", text)
 
 
@@ -152,8 +156,10 @@ def white_space_fix(text: str) -> str:
     return " ".join(text.split())
 
 
+exclude = set(string.punctuation)
+
+
 def remove_punc(text: str) -> str:
-    exclude = set(string.punctuation)
     return "".join(ch for ch in text if ch not in exclude)
 
 
@@ -199,6 +205,8 @@ no_answer_indications = [
     "none are mentioned in passage",
 ]
 
+split_on_keywords = ["**final answer:**", "final answer:", "answer:"]
+
 
 def postprocess_qa(txt: str) -> str:
     txt = str(txt)
@@ -210,23 +218,16 @@ def postprocess_qa(txt: str) -> str:
             return txt
 
     for prefix in prefixes_txt_to_remove:
-        txt = txt.removeprefix(prefix)
+        txt = txt.removeprefix(prefix).strip()
 
-    try:
-        txt = txt.split("final answer:")[1]
-    except Exception:
-        try:
-            txt = txt.split("answer:")[1]
-        except Exception:
-            try:
-                txt = txt.split("**final answer:**")[1]
-            except Exception:
-                pass
+    for keyword in split_on_keywords:
+        if keyword in txt:
+            txt = txt.split(keyword)[1].strip()
 
     for to_replace in replace_with_space:
-        txt = txt.replace(to_replace, "")
-    txt = txt.strip()
-    return txt
+        txt = txt.replace(to_replace, "").strip()
+
+    return txt.strip()
 
 
 def normalize_answer(text: str) -> str:
@@ -291,7 +292,7 @@ def qa_metric_sentence_similarity(prediction_file: str) -> Dict[str, float]:
 def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     # Read gold-data
     df = pd.read_csv(prediction_file, delimiter=",")
-    gold_answers = [[normalize_answer(str(ans)) for ans in str(answers).split("_@_")] for answers in df["gold_answer"].tolist()]
+    gold_answers = [str(answers).split("_@_") for answers in df["gold_answer"].tolist()]
     exact_scores = []
     f1_scores = []
     precision_scores = []
@@ -300,21 +301,23 @@ def qa_metric_squadv2_metrics(prediction_file: str) -> Dict[str, float]:
     metrics = {"potential_answer": "squadv2_metrics"}
     for metric_column, metric in metrics.items():
         if metric_column in df.columns:
-            predictions = [normalize_answer(pred) for pred in df[metric_column].tolist()]
-            orig_preds = df[metric_column].tolist()
-            for idx, pred in enumerate(predictions):
-                print("###")
-                print(pred)
-                print("<>\n")
-                print(orig_preds[idx])
-                print("####")
+            predictions = df[metric_column].tolist()
             for idx, prediction in enumerate(predictions):
                 gold_answer = gold_answers[idx]
                 # Take max over all gold answers
                 exact_scores.append(max(compute_exact(a, prediction) for a in gold_answer))
-                f1_scores.append(max(compute_f1_precision_recall(a, prediction)[0] for a in gold_answer))
-                precision_scores.append(max(compute_f1_precision_recall(a, prediction)[1] for a in gold_answer))
-                recall_scores.append(max(compute_f1_precision_recall(a, prediction)[2] for a in gold_answer))
+                max_f1 = 0.0
+                max_p = 0.0
+                max_r = 0.0
+                for a in gold_answer:
+                    f1, p, r = compute_f1_precision_recall(a, prediction)
+                    max_f1 = max([f1, max_f1])
+                    max_p = max([p, max_p])
+                    max_r = max([r, max_r])
+
+                f1_scores.append(max_f1)
+                precision_scores.append(max_p)
+                recall_scores.append(max_r)
 
             total = len(exact_scores)
             return_metrics[f"{metric}_exact"] = 100.0 * sum(exact_scores) / total
@@ -351,8 +354,8 @@ class RewardCalculator:
                 per_example_rewards = []
                 for sample_idx in range(len(sample_gold_answers[batch_idx])):
                     gold_answer_string = sample_gold_answers[batch_idx][sample_idx]
-                    references = [normalize_answer(str(ans)) for ans in str(gold_answer_string).split("_@_")]
-                    prediction = normalize_answer(sample_outputs[batch_idx][sample_idx])
+                    references = str(gold_answer_string).split("_@_")
+                    prediction = sample_outputs[batch_idx][sample_idx]
                     if self.reward_name == "squadv2_metrics_f1":
                         per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[0] for ref in references))
                     elif self.reward_name == "squadv2_metrics_recall":

@@ -52,6 +52,7 @@ flags.DEFINE_string("sharding_strategy", "NO_SHARD", "NO_SHARD | HYBRID_SHARD | 
 flags.DEFINE_boolean("ddp", True, "is this a pure ddp run?")
 flags.DEFINE_string("llm_name", "gemma2", "gemma2 | llama3")
 
+
 def get_lora_model_from_base_model(base_model: PreTrainedModel) -> PeftModel:
     """Initialize lora peft configuration from a non-lora model.
 
@@ -140,7 +141,7 @@ def load_model(
         )
         model_args["quantization_config"] = nf4_config
 
-    if FLAGS.llm_name in ["llama3", "llama3.1"]:
+    if FLAGS.llm_name in ["llama3", "llama3.2"]:
         # Load my own lm modelling code.
         model_class = LlamaForCausalLM
     else:
@@ -358,7 +359,9 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss) -> torch.Tensor:
+def log_of_labels(
+    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss, per_step_scores: bool = False
+) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits.
 
     This function is also useful for both Roberta model and getting
@@ -379,7 +382,9 @@ def log_of_labels(logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.n
 
     # good_log_p now has the log probability of the output
     # sequence tokens corresponding to the labels at the [MASK] location.
-    return torch.sum(good_log_p, dim=1), good_log_p
+    if per_step_scores:
+        return torch.sum(good_log_p, dim=1), good_log_p
+    return torch.sum(good_log_p, dim=1)
 
 
 def encoder_decoder_log_of_labels(
@@ -411,7 +416,7 @@ def encoder_decoder_log_of_labels(
 
 
 def decoder_only_log_of_labels(
-    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss
+    logits: torch.Tensor, labels: torch.Tensor, loss_func: torch.nn.CrossEntropyLoss, per_step_scores: bool = False
 ) -> torch.Tensor:
     """Compute the actual log of labels given pre-computed logits."""
 
@@ -419,7 +424,7 @@ def decoder_only_log_of_labels(
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
-    return log_of_labels(shift_logits, shift_labels, loss_func)
+    return log_of_labels(shift_logits, shift_labels, loss_func, per_step_scores)
 
 
 def lm_logits(

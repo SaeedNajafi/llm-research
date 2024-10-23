@@ -22,6 +22,7 @@ INSTALL_REQUIRES = [
     "tqdm",
     # "llm2vec",
     "wandb",
+    "peft",
     "bitsandbytes",
     "sentence_transformers",
     "transformers",

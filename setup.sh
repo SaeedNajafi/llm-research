@@ -44,7 +44,7 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 pip3 install tensorflow tensorflow-hub
 
 echo "Install the editable version of llm-research."
-pip3 install -e .[dev]
+pip3 install --use-pep517 -e .[dev]
 
 export CUDA_HOME=$CONDA_PREFIX
 export NCCL_HOME=$CONDA_PREFIX

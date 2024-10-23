@@ -20,7 +20,7 @@ import inspect
 import warnings
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Callable, Iterator, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -262,7 +262,6 @@ class MyGenerationMixin(GenerationMixin):
     huggingface to mix-in-the model.
     """
 
-    @torch.no_grad()
     def generate(
         self,
         inputs: Optional[torch.Tensor] = None,
@@ -277,8 +276,9 @@ class MyGenerationMixin(GenerationMixin):
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         mix_in_model: Optional["PreTrainedModel"] = None,
         mix_in_alpha: Optional[float] = 0.2,
+        iterative_rl_sampling: Optional[bool] = False,
         **kwargs,
-    ) -> Union[GenerateOutput, torch.LongTensor]:
+    ) -> Iterator[Union[GenerateOutput, torch.LongTensor]]:
         r"""Generates sequences of token ids for models with a language modeling
         head.
 
@@ -366,7 +366,6 @@ class MyGenerationMixin(GenerationMixin):
                     - [`~generation.GenerateEncoderDecoderOutput`],
                     - [`~generation.GenerateBeamEncoderDecoderOutput`]
         """
-        print("This is my generation.")
         # 1. Handle `generation_config` and kwargs that might update it, and validate the `.generate()` call
         self._validate_model_class()
         tokenizer = kwargs.pop("tokenizer", None)  # Pull this out first, we only use it for stopping criteria
@@ -599,26 +598,74 @@ class MyGenerationMixin(GenerationMixin):
             )
 
         elif generation_mode in (GenerationMode.SAMPLE, GenerationMode.GREEDY_SEARCH):
-            # 11. expand input_ids with `num_return_sequences` additional sequences per batch
-            input_ids, model_kwargs = self._expand_inputs_for_generation(
-                input_ids=input_ids,
-                expand_size=generation_config.num_return_sequences,
-                is_encoder_decoder=self.config.is_encoder_decoder,
-                **model_kwargs,
-            )
+            # Comment by Saeed:
+            # The default batch expansion requires a lot of memory.
+            # We will switch to a version where we loop num_return_sequences times to reduce GPU memory size.
+            if iterative_rl_sampling:
+                for index in range(generation_config.num_return_sequences):
+                    # 12. run sample (it degenerates to greedy search when `generation_config.do_sample=False`)
+                    result = self._sample(
+                        input_ids,
+                        logits_processor=prepared_logits_processor,
+                        stopping_criteria=prepared_stopping_criteria,
+                        generation_config=generation_config,
+                        synced_gpus=synced_gpus,
+                        streamer=streamer,
+                        mix_in_model=mix_in_model,
+                        mix_in_alpha=mix_in_alpha,
+                        **deepcopy(model_kwargs),
+                    )
 
-            # 12. run sample (it degenerates to greedy search when `generation_config.do_sample=False`)
-            result = self._sample(
-                input_ids,
-                logits_processor=prepared_logits_processor,
-                stopping_criteria=prepared_stopping_criteria,
-                generation_config=generation_config,
-                synced_gpus=synced_gpus,
-                streamer=streamer,
-                mix_in_model=mix_in_model,
-                mix_in_alpha=mix_in_alpha,
-                **model_kwargs,
-            )
+                    # Convert to legacy cache format if requested
+                    if (
+                        generation_config.return_legacy_cache is not False  # Should check for `True` after v4.47
+                        and not is_torchdynamo_compiling()
+                        and hasattr(result, "past_key_values")
+                        and hasattr(result.past_key_values, "to_legacy_cache")
+                        and result.past_key_values.to_legacy_cache is not None
+                    ):
+                        # handle BC (convert by default if he user hasn't passed a cache AND the cache is of the default type)
+                        should_convert_cache = generation_config.return_legacy_cache
+                        is_user_defined_cache = user_defined_cache is not None
+                        is_default_cache_type = type(result.past_key_values) == DynamicCache or (  # noqa E721
+                            isinstance(result.past_key_values, EncoderDecoderCache)
+                            and type(result.past_key_values.self_attention_cache) == DynamicCache  # noqa E721
+                            and type(result.past_key_values.cross_attention_cache) == DynamicCache  # noqa E721
+                        )
+                        if not is_user_defined_cache and is_default_cache_type:
+                            logger.warning_once(
+                                "From v4.47 onwards, when a model cache is to be returned, `generate` will return a `Cache` "
+                                "instance instead by default (as opposed to the legacy tuple of tuples format). If you want to "
+                                "keep returning the legacy format, please set `return_legacy_cache=True`."
+                            )
+                            should_convert_cache = True
+                        if should_convert_cache:
+                            result.past_key_values = result.past_key_values.to_legacy_cache()
+
+                    yield result
+
+                return
+
+            else:
+                # 11. expand input_ids with `num_return_sequences` additional sequences per batch
+                input_ids, model_kwargs = self._expand_inputs_for_generation(
+                    input_ids=input_ids,
+                    expand_size=generation_config.num_return_sequences,
+                    is_encoder_decoder=self.config.is_encoder_decoder,
+                    **model_kwargs,
+                )
+                # 12. run sample (it degenerates to greedy search when `generation_config.do_sample=False`)
+                result = self._sample(
+                    input_ids,
+                    logits_processor=prepared_logits_processor,
+                    stopping_criteria=prepared_stopping_criteria,
+                    generation_config=generation_config,
+                    synced_gpus=synced_gpus,
+                    streamer=streamer,
+                    mix_in_model=mix_in_model,
+                    mix_in_alpha=mix_in_alpha,
+                    **model_kwargs,
+                )
 
         elif generation_mode in (GenerationMode.BEAM_SAMPLE, GenerationMode.BEAM_SEARCH):
             # 11. prepare beam search scorer
@@ -773,7 +820,7 @@ class MyGenerationMixin(GenerationMixin):
                 should_convert_cache = True
             if should_convert_cache:
                 result.past_key_values = result.past_key_values.to_legacy_cache()
-        return result
+        yield result
 
     def _sample(
         self,
