@@ -10,7 +10,7 @@ import collections
 import math
 import re
 import string
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import torch
@@ -235,19 +235,31 @@ def normalize_answer(text: str) -> str:
     return white_space_fix(remove_articles(remove_punc(postprocess_qa(text))))
 
 
-def get_tokens(text: str) -> List[str]:
+def get_tokens(text: str, no_removal: bool = False) -> List[str]:
     if not text:
         return []
-    return normalize_answer(text).split()
+    text = text.replace(">assistant<", "> assistant <")
+    text = text.replace(">assistant", "> assistant")
+    text = text.replace(">\n\n", "> \n\n")
+    if " <|eot_id|>" not in text:
+        text = text.replace("<|eot_id|>", " <|eot_id|>")
+    if not no_removal:
+        return normalize_answer(text).split()
+    else:
+        return text.lower().strip().split(" ")
 
 
-def compute_exact(a_gold: str, a_pred: str) -> int:
-    return int(normalize_answer(a_gold) == normalize_answer(a_pred))
+def compute_exact(a_gold: str, a_pred: str, no_removal: bool = False) -> int:
+    if not no_removal:
+        return int(normalize_answer(a_gold) == normalize_answer(a_pred))
+    else:
+        return int(a_gold.lower().strip() == a_pred.lower().strip())
+    
 
 
-def compute_f1_precision_recall(a_gold: str, a_pred: str) -> List[float]:
-    gold_toks = get_tokens(a_gold)
-    pred_toks = get_tokens(a_pred)
+def compute_f1_precision_recall(a_gold: str, a_pred: str, no_removal: bool = False) -> List[float]:
+    gold_toks = get_tokens(a_gold, no_removal)
+    pred_toks = get_tokens(a_pred, no_removal)
     common = collections.Counter(gold_toks) & collections.Counter(pred_toks)
     num_same = sum(common.values())
     if gold_toks == ["this", "question", "is", "not", "answerable"] or pred_toks == [
@@ -340,6 +352,45 @@ class RewardCalculator:
 
     def __init__(self, reward_name: str):
         self.reward_name = reward_name
+
+    def compute_returns(self, gold_answers: List[List[str]], partial_outputs: List[List[List[str]]],
+                        output_template: str) -> Tuple[List[List[List[float]]], List[float]]:
+        """Depending on the reward function, call the necessary functions.
+        
+        This is to compute the return for each step.
+        """
+        returns = []
+        flattened_returns = []
+        if self.reward_name in [
+            "squadv2_metrics_f1",
+            "squadv2_metrics_recall",
+            "squadv2_metrics_precision",
+            "squadv2_metrics_exact",
+        ]:
+            for batch_idx in range(len(gold_answers)):
+                per_example_returns = []
+                for sample_idx in range(len(gold_answers[batch_idx])):
+                    gold_answer_string = gold_answers[batch_idx][sample_idx]
+                    references = str(gold_answer_string).split("_@_")
+                    templated_references = [output_template.format(output=f"Final Answer: {ref}") for ref in references]
+                    partial_predictions = partial_outputs[batch_idx][sample_idx]
+                    sequence_rewards = []
+                    for prediction in partial_predictions:
+                        if self.reward_name == "squadv2_metrics_f1":
+                            sequence_rewards.append(max(compute_f1_precision_recall(ref, prediction, no_removal=True)[0] for ref in templated_references))
+                        elif self.reward_name == "squadv2_metrics_recall":
+                            sequence_rewards.append(max(compute_f1_precision_recall(ref, prediction, no_removal=True)[2] for ref in templated_references))
+                        elif self.reward_name == "squadv2_metrics_precision":
+                            sequence_rewards.append(max(compute_f1_precision_recall(ref, prediction, no_removal=True)[1] for ref in templated_references))
+                        elif self.reward_name == "squadv2_metrics_exact":
+                            sequence_rewards.append(max(compute_exact(ref, prediction, no_removal=True) for ref in templated_references))
+                    complete_reward = sequence_rewards[-1]
+                    sample_returns = [complete_reward] + [complete_reward - reward for reward in sequence_rewards]
+                    # Last return is zero and we never use it.
+                    flattened_returns.extend(sample_returns[0:-1])
+                    per_example_returns.append(sample_returns[0:-1])
+                returns.append(per_example_returns)
+        return returns, flattened_returns
 
     def compute_rewards(self, sample_gold_answers: List[List[str]], sample_outputs: List[List[str]]) -> List[List[float]]:
         """Depending on the reward function, call the necessary functions."""

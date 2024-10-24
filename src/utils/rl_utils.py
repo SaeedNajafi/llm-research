@@ -1,22 +1,18 @@
 import torch
 
 
-def z_scoring(rewards: torch.FloatTensor) -> torch.FloatTensor:
-    """Perform normalization of the rewards using z-scoring."""
-    batch_size, num_samples = rewards.size()
-    assert num_samples > 1
-    rewards_mean = torch.mean(rewards, dim=1, keepdim=True)
-    rewards_std = torch.std(rewards, dim=1, keepdim=True)
-    return (rewards - rewards_mean) / (rewards_std + 1e-12)
+def z_scoring(signal: torch.FloatTensor) -> torch.FloatTensor:
+    """Perform normalization of the signal using z-scoring."""
+    signal_mean = torch.mean(signal)
+    signal_std = torch.std(signal)
+    return (signal - signal_mean) / (signal_std + 1e-12)
 
 
-def normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:
-    """Perform normalization of the rewards to be between [-1, 1]"""
-    batch_size, num_samples = rewards.size()
-    assert num_samples > 1
-    rewards_max, _ = torch.max(rewards, dim=1, keepdim=True)
-    rewards_min, _ = torch.min(rewards, dim=1, keepdim=True)
-    return 2 * (rewards - rewards_min) / (rewards_max - rewards_min + 1e-12) - 1.0
+def normalize(signal: torch.FloatTensor) -> torch.FloatTensor:
+    """Perform normalization of the signal to be between [-1, 1]"""
+    signal_max = torch.max(signal)
+    signal_min = torch.min(signal)
+    return 2 * (signal - signal_min) / (signal_max - signal_min + 1e-12) - 1.0
 
 
 def rloo_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:

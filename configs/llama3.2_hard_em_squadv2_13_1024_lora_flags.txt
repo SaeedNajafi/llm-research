@@ -41,6 +41,7 @@
 --train_batch_size=2
 --eval_batch_size=4
 --ddp
+--reward_normalization_type=normalize
 --objective_type=reinforce
 --rl_sample_size=8
 --iterative_chunk_size=2

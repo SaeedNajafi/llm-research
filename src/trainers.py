@@ -8,7 +8,6 @@ from torch.distributions import Categorical
 
 from src.llm import LLM
 from src.metrics import RewardCalculator
-from src.utils.rl_utils import normalize, rloo_normalize, z_scoring
 
 FLAGS = flags.FLAGS
 
@@ -44,20 +43,32 @@ class LossCalculator:
         self.objective_type = objective_type
         self.reward_calculator = RewardCalculator(reward_name=reward_name)
 
-    def normalize_rewards(self, sample_output_rewards: List[List[float]]) -> torch.Tensor:
-        """Zscore or normalize between [-1, 1] or MML style normalization."""
-        rewards = torch.tensor(sample_output_rewards, device=self.policy_lm.device)
-        if FLAGS.reward_normalization_type == "zscore":
-            return z_scoring(rewards)
+    def normalize_signals(self, signals: List[List[List[float]]], 
+                          flat_signals: List[float]) -> List[List[torch.Tensor]]:
+        """Zscore or normalize between [-1, 1]."""
+        flat_signals = torch.tensor(flat_signals, dtype=torch.float64, device=self.policy_lm.device)
+        mean_s = flat_signals.mean()
+        std_s = flat_signals.std()
+        max_s = flat_signals.max()
+        min_s = flat_signals.min()
+        batch_size = len(signals)
+        normalized_signals_arr = []
+        for b_idx in range(batch_size):
+            sample_size = len(signals[b_idx])
+            sample_normalized_signals = []
+            for sample_idx in range(sample_size):
+                sample_signals = signals[b_idx][sample_idx]
+                sample_signals = torch.tensor(sample_signals, dtype=torch.float64, device=self.policy_lm.device)
+                if FLAGS.reward_normalization_type == "zscore":
+                    normalized_signals = (sample_signals - mean_s) / (std_s + 1e-12)
+                elif FLAGS.reward_normalization_type == "normalize":
+                    normalized_signals = 2 * (sample_signals - min_s) / (max_s - min_s + 1e-12) - 1.0
+                elif FLAGS.reward_normalization_type == "no_normalize":
+                    normalized_signals = sample_signals
+                sample_normalized_signals.append(normalized_signals)
+            normalized_signals_arr.append(sample_normalized_signals)   
 
-        elif FLAGS.reward_normalization_type == "normalize":
-            return normalize(rewards)
-
-        elif FLAGS.reward_normalization_type == "rloo_normalize":
-            return rloo_normalize(rewards)
-
-        elif FLAGS.reward_normalization_type == "no_normalize":
-            return rewards
+        return normalized_signals_arr
 
     def teacher_forcing_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         return self.policy_lm.train(batch)
@@ -245,8 +256,10 @@ class LossCalculator:
         # These are full sequence returns.
         # Compute the rewards.
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
-        per_step_returns = self.reward_calculator.compute_returns(gold_answers, partial_samples)
-        per_step_returns = torch.tensor(per_step_returns, dtype=torch.float64, device=self.policy_lm.device)
+        per_step_returns, flat_returns = self.reward_calculator.compute_returns(gold_answers, partial_samples,
+                                                                  output_template=self.policy_lm.output_template)
+        normalized_returns = self.normalize_signals(signals=per_step_returns, flat_signals=flat_returns)
+        print(normalized_returns)
         if not iterative_finetuning:
             # This is the MML objective.
             log_of_returns = torch.log(returns + 1e-12)
