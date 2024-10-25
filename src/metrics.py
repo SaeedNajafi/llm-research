@@ -254,7 +254,6 @@ def compute_exact(a_gold: str, a_pred: str, no_removal: bool = False) -> int:
         return int(normalize_answer(a_gold) == normalize_answer(a_pred))
     else:
         return int(a_gold.lower().strip() == a_pred.lower().strip())
-    
 
 
 def compute_f1_precision_recall(a_gold: str, a_pred: str, no_removal: bool = False) -> List[float]:
@@ -353,10 +352,11 @@ class RewardCalculator:
     def __init__(self, reward_name: str):
         self.reward_name = reward_name
 
-    def compute_returns(self, gold_answers: List[List[str]], partial_outputs: List[List[List[str]]],
-                        output_template: str) -> Tuple[List[List[List[float]]], List[float]]:
+    def compute_returns(
+        self, gold_answers: List[List[str]], partial_outputs: List[List[List[str]]], output_template: str
+    ) -> Tuple[List[List[List[float]]], List[float]]:
         """Depending on the reward function, call the necessary functions.
-        
+
         This is to compute the return for each step.
         """
         returns = []
@@ -377,13 +377,30 @@ class RewardCalculator:
                     sequence_rewards = []
                     for prediction in partial_predictions:
                         if self.reward_name == "squadv2_metrics_f1":
-                            sequence_rewards.append(max(compute_f1_precision_recall(ref, prediction, no_removal=True)[0] for ref in templated_references))
+                            sequence_rewards.append(
+                                max(
+                                    compute_f1_precision_recall(ref, prediction, no_removal=True)[0]
+                                    for ref in templated_references
+                                )
+                            )
                         elif self.reward_name == "squadv2_metrics_recall":
-                            sequence_rewards.append(max(compute_f1_precision_recall(ref, prediction, no_removal=True)[2] for ref in templated_references))
+                            sequence_rewards.append(
+                                max(
+                                    compute_f1_precision_recall(ref, prediction, no_removal=True)[2]
+                                    for ref in templated_references
+                                )
+                            )
                         elif self.reward_name == "squadv2_metrics_precision":
-                            sequence_rewards.append(max(compute_f1_precision_recall(ref, prediction, no_removal=True)[1] for ref in templated_references))
+                            sequence_rewards.append(
+                                max(
+                                    compute_f1_precision_recall(ref, prediction, no_removal=True)[1]
+                                    for ref in templated_references
+                                )
+                            )
                         elif self.reward_name == "squadv2_metrics_exact":
-                            sequence_rewards.append(max(compute_exact(ref, prediction, no_removal=True) for ref in templated_references))
+                            sequence_rewards.append(
+                                max(compute_exact(ref, prediction, no_removal=True) for ref in templated_references)
+                            )
                     complete_reward = sequence_rewards[-1]
                     sample_returns = [complete_reward] + [complete_reward - reward for reward in sequence_rewards]
                     # Last return is zero and we never use it.

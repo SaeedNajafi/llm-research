@@ -43,8 +43,7 @@ class LossCalculator:
         self.objective_type = objective_type
         self.reward_calculator = RewardCalculator(reward_name=reward_name)
 
-    def normalize_signals(self, signals: List[List[List[float]]], 
-                          flat_signals: List[float]) -> List[List[torch.Tensor]]:
+    def normalize_signals(self, signals: List[List[List[float]]], flat_signals: List[float]) -> List[List[torch.Tensor]]:
         """Zscore or normalize between [-1, 1]."""
         flat_signals = torch.tensor(flat_signals, dtype=torch.float64, device=self.policy_lm.device)
         mean_s = flat_signals.mean()
@@ -66,7 +65,7 @@ class LossCalculator:
                 elif FLAGS.reward_normalization_type == "no_normalize":
                     normalized_signals = sample_signals
                 sample_normalized_signals.append(normalized_signals)
-            normalized_signals_arr.append(sample_normalized_signals)   
+            normalized_signals_arr.append(sample_normalized_signals)
 
         return normalized_signals_arr
 
@@ -112,7 +111,6 @@ class LossCalculator:
         # Should we implement the soft q-learning?
         # Should we implement the soft actor-critic?
         pass
-
 
     # def on_policy_rl_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
     #     """This is the function to sample from the same policy and train it
@@ -175,9 +173,7 @@ class LossCalculator:
 
     #     return loss
 
-    def reinforce_loss(
-        self, batch: torch.utils.data.Dataset
-    ) -> torch.Tensor:
+    def reinforce_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Use reinforce with per-step rewards to compute the loss."""
         assert FLAGS.rl_sample_size > 1
         num_iterative_calls = FLAGS.rl_sample_size // FLAGS.iterative_chunk_size
@@ -216,7 +212,11 @@ class LossCalculator:
                     [generations_per_call[b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size]]
                 )
                 batch_partial_generations_per_call.append(
-                    [partial_generations_per_call[b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size]]
+                    [
+                        partial_generations_per_call[
+                            b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size
+                        ]
+                    ]
                 )
             final_log_ps.append(final_log_ps_per_call.view(batch_size, FLAGS.iterative_chunk_size))
             actual_lens.append(actual_lens_per_call.view(batch_size, FLAGS.iterative_chunk_size))
@@ -256,8 +256,9 @@ class LossCalculator:
         # These are full sequence returns.
         # Compute the rewards.
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
-        per_step_returns, flat_returns = self.reward_calculator.compute_returns(gold_answers, partial_samples,
-                                                                  output_template=self.policy_lm.output_template)
+        per_step_returns, flat_returns = self.reward_calculator.compute_returns(
+            gold_answers, partial_samples, output_template=self.policy_lm.output_template
+        )
         normalized_returns = self.normalize_signals(signals=per_step_returns, flat_signals=flat_returns)
         print(normalized_returns)
         if not iterative_finetuning:
@@ -279,9 +280,11 @@ class LossCalculator:
             )
             return loss
 
-
     def maximum_marginal_likelihood_loss(
-        self, batch: torch.utils.data.Dataset, iterative_finetuning: bool = False
+        self,
+        batch: torch.utils.data.Dataset,
+        iterative_finetuning: bool = False,
+        reinforce_terminal_reward_only: bool = False,
     ) -> torch.Tensor:
         """Use maximum marginal likelihood training to compute the loss."""
         assert FLAGS.rl_sample_size > 1
@@ -321,17 +324,33 @@ class LossCalculator:
                 sample_arr.extend(generations[call_idx][b_idx][0])
             samples.append(sample_arr)
 
-        # These are full sequence returns.
         sample_returns = self.reward_calculator.compute_rewards(gold_answers, samples)
-        returns = torch.tensor(sample_returns, dtype=torch.float64, device=self.policy_lm.device)
-        if not iterative_finetuning:
+        if (not iterative_finetuning) and (not reinforce_terminal_reward_only):
+            # These are full sequence returns.
+            returns = torch.tensor(sample_returns, dtype=torch.float64, device=self.policy_lm.device)
             # This is the MML objective.
             log_of_returns = torch.log(returns + 1e-12)
             loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_returns, dim=1), dim=0)
             return loss
+        elif reinforce_terminal_reward_only:
+            # This is reinforce style training.
+            flatten_returns = []
+            for batch_returns in sample_returns:
+                flatten_returns.extend(batch_returns)
+            normalized_returns = self.normalize_signals(signals=[sample_returns], flat_signals=flatten_returns)
+            normalized_returns = normalized_returns[0]  # remove extra []
+            objective = 0.0
+            for b_idx in range(batch_size):
+                example_sequence_log_ps = sequence_log_probs[b_idx, :]
+                example_returns = normalized_returns[b_idx]
+                objective += torch.mean(example_sequence_log_ps * example_returns)
+            loss = -objective / batch_size
+            return loss
         else:
             # This is iterative fine-tuning.
             # Find the sample with the highest return.
+            # These are full sequence returns.
+            returns = torch.tensor(sample_returns, dtype=torch.float64, device=self.policy_lm.device)
             max_values, max_indices = torch.max(returns, dim=1, keepdim=True)
             return_masks = (max_values > 0.5).float()
             selected_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices) * return_masks
@@ -378,6 +397,9 @@ class LossCalculator:
 
         elif self.objective_type == "iterative_finetuning":
             return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
+
+        elif self.objective_type == "reinforce_terminal_reward":
+            return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward_only=True)
 
         elif self.objective_type == "reinforce":
             return self.reinforce_loss(batch)

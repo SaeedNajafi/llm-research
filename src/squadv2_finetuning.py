@@ -77,7 +77,15 @@ def main(argv: Any) -> None:
         if FLAGS.use_peft:
             wandb_run.config.update(model.peft_config)
 
-    if FLAGS.objective_type in ["teacher_forcing", "reinforce", "mml", "hard_em", "iml", "iterative_finetuning"]:
+    if FLAGS.objective_type in [
+        "teacher_forcing",
+        "reinforce",
+        "mml",
+        "hard_em",
+        "iml",
+        "iterative_finetuning",
+        "reinforce_terminal_reward",
+    ]:
         loss_calculator = LossCalculator(policy_lm=model, objective_type=FLAGS.objective_type, reward_name="squadv2_metrics_f1")
 
     if FLAGS.mode == "train":

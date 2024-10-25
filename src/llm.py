@@ -1,5 +1,6 @@
 """The main module to train or make inference with llm."""
 
+from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
@@ -22,7 +23,6 @@ from src.utils.model_utils import (
     print_model_size,
     shard_model,
 )
-from dataclasses import dataclass
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -72,6 +72,7 @@ class LLMGenerationOutput:
     logits: Optional[torch.FloatTensor] = None
     labels_to_consider: Optional[torch.FloatTensor] = None
     partially_generated_sequences: Optional[List[List[str]]] = None
+
 
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
@@ -352,11 +353,14 @@ class LLM(torch.nn.Module):
             outputs = []
             for result in results:
                 predictions_output = result
-                outputs.append(self.find_log_information(predictions_output, input_ids, per_step_scores, generate_partial_sequences))
+                outputs.append(
+                    self.find_log_information(predictions_output, input_ids, per_step_scores, generate_partial_sequences)
+                )
             return outputs
 
-    def find_log_information(self, predictions_output: Any, input_ids: torch.Tensor,
-                             per_step_scores: bool, generate_partial_sequences: bool) -> LLMGenerationOutput:
+    def find_log_information(
+        self, predictions_output: Any, input_ids: torch.Tensor, per_step_scores: bool, generate_partial_sequences: bool
+    ) -> LLMGenerationOutput:
         """Helper function to find generation logits and sequences."""
         prompt_len = input_ids.size()[1]
         selected_samples = predictions_output.sequences[:, prompt_len:]
@@ -369,7 +373,7 @@ class LLM(torch.nn.Module):
                 for seq_index in range(seq_len):
                     if selected_samples[b_index, seq_index] == self.tokenizer.pad_token_id:
                         break
-                    prefix = self.tokenizer.decode(selected_samples[b_index, 0:seq_index+1], skip_special_tokens=False)
+                    prefix = self.tokenizer.decode(selected_samples[b_index, 0 : seq_index + 1], skip_special_tokens=False)
                     partial_sequences_per_batch.append(prefix)
                 partial_sequences.append(partial_sequences_per_batch)
 
@@ -381,20 +385,23 @@ class LLM(torch.nn.Module):
                 logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=True
             )
             actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
-            llm_generation_output = LLMGenerationOutput(predictions_str=predictions_str,
-                                                        final_log_ps=final_log_ps,
-                                                        token_final_log_ps=token_final_log_ps,
-                                                        actual_lens=actual_lens,
-                                                        logits=logits,
-                                                        labels_to_consider=labels_to_consider)
+            llm_generation_output = LLMGenerationOutput(
+                predictions_str=predictions_str,
+                final_log_ps=final_log_ps,
+                token_final_log_ps=token_final_log_ps,
+                actual_lens=actual_lens,
+                logits=logits,
+                labels_to_consider=labels_to_consider,
+            )
         else:
             actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
             final_log_ps = log_of_labels(
                 logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=False
             )
-            llm_generation_output = LLMGenerationOutput(predictions_str=predictions_str,
-                                                        final_log_ps=final_log_ps / actual_lens)
-        
+            llm_generation_output = LLMGenerationOutput(
+                predictions_str=predictions_str, final_log_ps=final_log_ps / actual_lens
+            )
+
         if generate_partial_sequences:
             llm_generation_output.partially_generated_sequences = partial_sequences
 
