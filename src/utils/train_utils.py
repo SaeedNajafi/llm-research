@@ -107,6 +107,9 @@ def train(
     # If no checkpoint, it returns 0.
     _, checkpointed_epoch = find_checkpoint(model)
 
+    # Evaluate the pre-trained model.
+    evaluation(model, "eval", eval_dataloader, FLAGS.prediction_file, rank, world_size, wandb_run, metric)
+
     # Start the training loop
     for epoch in range(checkpointed_epoch - 1, FLAGS.num_epochs):
         # stop when the maximum number of training steps is reached

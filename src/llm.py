@@ -65,13 +65,13 @@ _LLAMA32_EXTRA_TOKENS = {
 
 @dataclass
 class LLMGenerationOutput:
-    predictions_str: List[str] = None
+    predictions_str: List[str] = []
     final_log_ps: torch.FloatTensor = None
-    token_final_log_ps: Optional[torch.FloatTensor] = None
-    actual_lens: Optional[torch.LongTensor] = None
-    logits: Optional[torch.FloatTensor] = None
-    labels_to_consider: Optional[torch.FloatTensor] = None
-    partially_generated_sequences: Optional[List[List[str]]] = None
+    token_final_log_ps: torch.FloatTensor = None
+    actual_lens: torch.LongTensor = None
+    logits: torch.FloatTensor = None
+    labels_to_consider: torch.FloatTensor = None
+    partially_generated_sequences: List[List[str]] = [[]]
 
 
 class LLM(torch.nn.Module):
