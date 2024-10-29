@@ -1,6 +1,22 @@
 import torch
 
 
+def compute_entropy(self, labels_to_consider: List[List[torch.FloatTensor]],
+                    actual_lens: torch.LongTensor, logits: List[List[torch.FloatTensor]]) -> torch.Tensor:
+    """Compute per-step entropy."""
+    #     if FLAGS.compute_per_step_entropy:
+    #         entropy_masks = torch.where(labels_to_consider == -100, 0, 1)
+    #         distribution = Categorical(logits=logits)
+    #         sequence_entropy = torch.sum(distribution.entropy() * entropy_masks, dim=1) / actual_lens
+    #         sequence_entropy = sequence_entropy.view(batch_size, FLAGS.rl_sample_size)
+
+    #     if FLAGS.compute_per_step_entropy:
+    #         entropy_loss_part_one = -torch.mean(torch.mean(sequence_log_probs * sequence_entropy.detach(), dim=1), dim=0)
+    #         entropy_loss_part_two = -torch.mean(torch.mean(sequence_entropy, dim=1), dim=0)
+    #         entropy_loss = entropy_loss_part_one + entropy_loss_part_two
+    #         loss += FLAGS.entropy_coef * entropy_loss
+
+
 def z_scoring(signal: torch.FloatTensor) -> torch.FloatTensor:
     """Perform normalization of the signal using z-scoring."""
     signal_mean = torch.mean(signal)

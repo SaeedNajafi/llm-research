@@ -409,6 +409,7 @@ def evaluation(
 
                 eval_loss += ret_loss
 
+    dist.barrier()
     if rank == 0:
         memtrace.print_stats()
 
@@ -451,6 +452,7 @@ def evaluation(
                 log_data[f"{eval_type}/{score_name}"] = score_val
             wandb_run.log(log_data, commit=False)
 
+    dist.barrier()
     return eval_ppl, eval_epoch_loss, val_step_loss, val_step_perplexity, float_val_socres
 
 

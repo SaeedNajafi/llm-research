@@ -34,11 +34,11 @@ nvidia-smi
 NUM_GPUs=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 echo "GPUs per node: ${NUM_GPUs}"
 
-# export TORCH_DISTRIBUTED_DEBUG=DETAIL
-# export NCCL_DEBUG=WARN
-# export NCCL_DEBUG_SUBSYS=WARN
-# export TORCH_CPP_LOG_LEVEL=INFO
-# export LOGLEVEL=INFO
+export TORCH_DISTRIBUTED_DEBUG=DETAIL
+export NCCL_DEBUG=WARN
+export NCCL_DEBUG_SUBSYS=WARN
+export TORCH_CPP_LOG_LEVEL=INFO
+export LOGLEVEL=INFO
 
 srun -N "${SLURM_NNODES}" -l \
         bash -c "TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun \

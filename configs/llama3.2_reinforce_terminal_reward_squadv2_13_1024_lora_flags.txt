@@ -1,7 +1,7 @@
 --dev_file=/h/snajafi/llm-research/data/1024-shot-datasets/squad/1024-13-dev.tsv
 --train_file=/h/snajafi/llm-research/data/1024-shot-datasets/squad/1024-13-train.tsv
---checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl_experiments_llama3.2_1b/squadv2_1024_13/reinforce_terminal_reward_no_normalize
---prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl_experiments_llama3.2_1b/squadv2_1024_13/reinforce_terminal_reward_no_normalize/internal_validation_prediction_squadv2.csv
+--checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl_experiments_llama3.2_1b_october/squadv2_1024_13/reinforce_terminal_reward_zscore
+--prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl_experiments_llama3.2_1b_october/squadv2_1024_13/reinforce_terminal_reward_zscore/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -15,7 +15,7 @@
 --use_profiler=false
 --max_train_step=0
 --max_eval_step=0
---num_epochs=5
+--num_epochs=3
 --steps_before_evaluation=32
 --gradient_accumulation_steps=2
 --gradient_clipping
@@ -36,12 +36,12 @@
 --weight_decay=0.001
 --mode=train
 --seed=13
---project_name=llm_research_squadv2_rl_13_1024_reinforce_terminal_reward_no_normalize
+--project_name=llm_research_squadv2_rl_13_1024_reinforce_terminal_reward_zscore
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=4
 --ddp
 --objective_type=reinforce_terminal_reward
---reward_normalization_type=no_normalize
---rl_sample_size=8
+--reward_normalization_type=zscore
+--rl_sample_size=5
 --iterative_chunk_size=1

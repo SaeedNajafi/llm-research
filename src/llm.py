@@ -1,6 +1,6 @@
 """The main module to train or make inference with llm."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import torch
@@ -65,13 +65,13 @@ _LLAMA32_EXTRA_TOKENS = {
 
 @dataclass
 class LLMGenerationOutput:
-    predictions_str: List[str] = []
+    predictions_str: List[str] = field(default_factory=list)
     final_log_ps: torch.FloatTensor = None
     token_final_log_ps: torch.FloatTensor = None
     actual_lens: torch.LongTensor = None
     logits: torch.FloatTensor = None
     labels_to_consider: torch.FloatTensor = None
-    partially_generated_sequences: List[List[str]] = [[]]
+    partially_generated_sequences: List[List[str]] = field(default_factory=list)
 
 
 class LLM(torch.nn.Module):
