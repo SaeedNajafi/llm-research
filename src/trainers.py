@@ -8,9 +8,6 @@ from absl import flags
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
 
-# from torch.distributions import Categorical
-
-
 FLAGS = flags.FLAGS
 
 flags.DEFINE_integer(

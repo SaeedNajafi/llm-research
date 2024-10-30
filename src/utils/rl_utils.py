@@ -1,20 +1,34 @@
+from typing import List
+
 import torch
+from torch.distributions import Categorical
 
 
-def compute_entropy(self, labels_to_consider: List[List[torch.FloatTensor]],
-                    actual_lens: torch.LongTensor, logits: List[List[torch.FloatTensor]]) -> torch.Tensor:
+def compute_entropy(
+    labels_to_consider: List[List[torch.FloatTensor]],
+    actual_lens: torch.LongTensor,
+    token_log_ps: List[List[torch.FloatTensor]],
+    logits: List[List[torch.FloatTensor]],
+) -> torch.Tensor:
     """Compute per-step entropy."""
-    #     if FLAGS.compute_per_step_entropy:
-    #         entropy_masks = torch.where(labels_to_consider == -100, 0, 1)
-    #         distribution = Categorical(logits=logits)
-    #         sequence_entropy = torch.sum(distribution.entropy() * entropy_masks, dim=1) / actual_lens
-    #         sequence_entropy = sequence_entropy.view(batch_size, FLAGS.rl_sample_size)
-
-    #     if FLAGS.compute_per_step_entropy:
-    #         entropy_loss_part_one = -torch.mean(torch.mean(sequence_log_probs * sequence_entropy.detach(), dim=1), dim=0)
-    #         entropy_loss_part_two = -torch.mean(torch.mean(sequence_entropy, dim=1), dim=0)
-    #         entropy_loss = entropy_loss_part_one + entropy_loss_part_two
-    #         loss += FLAGS.entropy_coef * entropy_loss
+    batch_size = len(labels_to_consider)
+    loss = 0.0
+    for b_idx in range(batch_size):
+        objective = 0.0
+        sample_size = len(labels_to_consider[b_idx])
+        for s_idx in range(sample_size):
+            labels_per_sample = labels_to_consider[b_idx][s_idx]
+            actual_lens_per_sample = actual_lens[b_idx, s_idx]
+            entropy_masks_per_sample = torch.where(labels_per_sample == -100, 0, 1)
+            distribution_per_sample = Categorical(logits=logits[b_idx][s_idx])
+            entropy_per_sample = distribution_per_sample.entropy() * entropy_masks_per_sample
+            token_log_ps_per_sample = token_log_ps[b_idx][s_idx]
+            prefix_log_ps_per_sample = torch.cumsum(token_log_ps_per_sample, dim=0)
+            part_one = prefix_log_ps_per_sample * entropy_per_sample.detach()
+            part_two = entropy_per_sample
+            objective += torch.sum(part_one + part_two, dim=0) / actual_lens_per_sample
+        loss += -objective / sample_size
+    return loss / batch_size
 
 
 def z_scoring(signal: torch.FloatTensor) -> torch.FloatTensor:
