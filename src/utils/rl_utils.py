@@ -4,13 +4,13 @@ import torch
 from torch.distributions import Categorical
 
 
-def compute_entropy(
+def compute_entropy_loss(
     labels_to_consider: List[List[torch.FloatTensor]],
     actual_lens: torch.LongTensor,
     token_log_ps: List[List[torch.FloatTensor]],
     logits: List[List[torch.FloatTensor]],
 ) -> torch.Tensor:
-    """Compute per-step entropy."""
+    """Compute loss for per-step entropy."""
     batch_size = len(labels_to_consider)
     loss = 0.0
     for b_idx in range(batch_size):
@@ -30,6 +30,20 @@ def compute_entropy(
         loss += -objective / sample_size
     return loss / batch_size
 
+
+def form_returns(rewards: List[List[torch.FloatTensor]]) -> List[List[torch.FloatTensor]]:
+    """Compute returns based on any rewards."""
+    returns = []
+    for batch_idx in range(len(rewards)):
+        sample_returns = []
+        for sample_idx in range(len(rewards[batch_idx])):
+            reward_sequence = rewards[batch_idx][sample_idx]
+            cum_sum = torch.cumsum(reward_sequence, dim=0)
+            full_sum = cum_sum[-1]
+            sequence_returns = torch.cat((full_sum.reshape(1), full_sum - cum_sum[0:-1]), dim=0)
+            sample_returns.append(sequence_returns.tolist())
+        returns.append(sample_returns)
+    return returns
 
 def z_scoring(signal: torch.FloatTensor) -> torch.FloatTensor:
     """Perform normalization of the signal using z-scoring."""

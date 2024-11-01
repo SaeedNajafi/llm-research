@@ -16,13 +16,13 @@ import pandas as pd
 import torch
 from absl import app, flags
 
-# from llm2vec import LLM2Vec
-# from peft import PeftModel
+from llm2vec import LLM2Vec
+from peft import PeftModel
 from sentence_transformers import SentenceTransformer
 
 from src.utils.general_utils import clear_gpu_cache
 
-# from transformers import AutoConfig, AutoModel, AutoTokenizer
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 
 
 FLAGS = flags.FLAGS
@@ -32,53 +32,53 @@ flags.DEFINE_string("metric_type", "llm2vec", "llm2vec or sentence-t5 model?")
 flags.DEFINE_string("input_file", "/path/filename", "absolute path and name of the file.")
 
 
-# def load_llm2vec(cuda_device: str) -> LLM2Vec:
-#     # Loading base llama-3-8b model, along with custom code that enables bidirectional connections in decoder-only
-#     # LLMs. MNTP LoRA weights are merged into the base model.
-#     tokenizer = AutoTokenizer.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp")
-#     config = AutoConfig.from_pretrained("McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp", trust_remote_code=True)
-#     model = AutoModel.from_pretrained(
-#         "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
-#         trust_remote_code=True,
-#         config=config,
-#         torch_dtype=torch.bfloat16,
-#         device_map=cuda_device if torch.cuda.is_available() else "cpu",
-#     )
-#     model = PeftModel.from_pretrained(
-#         model,
-#         "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
-#     )
-#     model = model.merge_and_unload()  # This can take several minutes on cpu
+def load_llm2vec(cuda_device: str, weights_base_folder: str) -> LLM2Vec:
+    # Loading base llama-3-8b model, along with custom code that enables bidirectional connections in decoder-only
+    # LLMs. MNTP LoRA weights are merged into the base model.
+    tokenizer = AutoTokenizer.from_pretrained(f"{weights_base_folder}/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp")
+    config = AutoConfig.from_pretrained(f"{weights_base_folder}/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp", trust_remote_code=True)
+    model = AutoModel.from_pretrained(
+        f"{weights_base_folder}/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+        trust_remote_code=True,
+        config=config,
+        torch_dtype=torch.bfloat16,
+        device_map=cuda_device if torch.cuda.is_available() else "cpu",
+    )
+    model = PeftModel.from_pretrained(
+        model,
+        f"{weights_base_folder}/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp",
+    )
+    model = model.merge_and_unload()  # This can take several minutes on cpu
 
-#     # Loading supervised model. This loads the trained LoRA weights on top of MNTP model.
-#     # Hence the final weights are -- Base model + MNTP (LoRA) + supervised (LoRA).
-#     model = PeftModel.from_pretrained(model, "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised")
+    # Loading supervised model. This loads the trained LoRA weights on top of MNTP model.
+    # Hence the final weights are -- Base model + MNTP (LoRA) + supervised (LoRA).
+    model = PeftModel.from_pretrained(model, f"{weights_base_folder}/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised")
 
-#     model = model.eval()
+    model = model.eval()
 
-#     # Wrapper for encoding and pooling operations
-#     l2v = LLM2Vec(model, tokenizer, pooling_mode="mean", max_length=8192)
+    # Wrapper for encoding and pooling operations
+    l2v = LLM2Vec(model, tokenizer, pooling_mode="mean", max_length=8192)
 
-#     return l2v
+    return l2v
 
 
 class QAMetricModel:
     """Load and cache a model used for evaluating generative text
     generation."""
 
-    sentence_t5_model_id = "sentence-transformers/sentence-t5-xxl"
-
-    def __init__(self, device: str = "cuda:0", batch_size: int = 16, metric_type: str = "llm2vec") -> None:
+    def __init__(self, device: str = "cuda:0", batch_size: int = 16, metric_type: str = "llm2vec",
+                 weights_base_folder: str = "McGill-NLP") -> None:
         """Save the gpu device and construct the model and cache it."""
         self.device = device
         self.batch_size = batch_size
         self.metric_type = metric_type
+        # This instruction is based on the llm2vec paper.
         self.instruction = "Retrieve Wikipedia passages that answer the question."
-        # if self.metric_type == "llm2vec":
-        #    self.metric_model = load_llm2vec(self.device)
-        # elif self.metric_type == "sentence_t5":
-        if self.metric_type == "sentence_t5":
-            self.metric_model = SentenceTransformer(self.sentence_t5_model_id, device=self.device).eval()
+        if self.metric_type == "llm2vec":
+            self.metric_model = load_llm2vec(self.device, weights_base_folder)
+        elif self.metric_type == "sentence_t5":
+            sentence_t5_model_id = f"{weights_base_folder}/sentence-t5-xxl"
+            self.metric_model = SentenceTransformer(sentence_t5_model_id, device=self.device).eval()
 
     def compute_metric(self, predictions: List[str], references: List[List[str]]) -> float:
         """Compute the metric for the given predictions and multiple
@@ -349,65 +349,85 @@ def qa_metric(prediction_file: str) -> Dict[str, float]:
 class RewardCalculator:
     """This class will be used to compute rewards to train text generators."""
 
-    def __init__(self, reward_name: str):
+    def __init__(self, reward_name: str, weights_base_folder: str):
         self.reward_name = reward_name
+        self.qa_metric_model = None
+        if self.reward_name in ["sentence_t5", "llm2vec"]:
+            self.qa_metric_model = QAMetricModel(
+                device=FLAGS.metric_device,
+                batch_size=FLAGS.metric_batch_size,
+                metric_type=self.reward_name,
+                weights_base_folder=weights_base_folder
+            )
+            
 
-    def compute_returns(
+    def compute_per_step_rewards(
         self, gold_answers: List[List[str]], partial_outputs: List[List[List[str]]], output_template: str
-    ) -> Tuple[List[List[List[float]]], List[float]]:
+    ) -> List[List[List[float]]]:
         """Depending on the reward function, call the necessary functions.
-
-        This is to compute the return for each step.
+        This is to compute the reward for each step.
         """
-        returns = []
-        flattened_returns = []
+        rewards = []
         if self.reward_name in [
             "squadv2_metrics_f1",
             "squadv2_metrics_recall",
             "squadv2_metrics_precision",
             "squadv2_metrics_exact",
+            "llm2vec",
+            "sentence_t5"
         ]:
             for batch_idx in range(len(gold_answers)):
-                per_example_returns = []
+                per_example_rewards = []
                 for sample_idx in range(len(gold_answers[batch_idx])):
                     gold_answer_string = gold_answers[batch_idx][sample_idx]
                     references = str(gold_answer_string).split("_@_")
                     templated_references = [output_template.format(output=f"Final Answer: {ref}") for ref in references]
                     partial_predictions = partial_outputs[batch_idx][sample_idx]
                     sequence_rewards = []
-                    for prediction in partial_predictions:
-                        if self.reward_name == "squadv2_metrics_f1":
-                            sequence_rewards.append(
-                                max(
-                                    compute_f1_precision_recall(ref, prediction, no_removal=True)[0]
-                                    for ref in templated_references
+                    if self.qa_metric_model is None:
+                        for prediction in partial_predictions:
+                            if self.reward_name == "squadv2_metrics_f1":
+                                sequence_rewards.append(
+                                    max(
+                                        compute_f1_precision_recall(ref, prediction, no_removal=True)[0]
+                                        for ref in templated_references
+                                    )
                                 )
-                            )
-                        elif self.reward_name == "squadv2_metrics_recall":
-                            sequence_rewards.append(
-                                max(
-                                    compute_f1_precision_recall(ref, prediction, no_removal=True)[2]
-                                    for ref in templated_references
+                            elif self.reward_name == "squadv2_metrics_recall":
+                                sequence_rewards.append(
+                                    max(
+                                        compute_f1_precision_recall(ref, prediction, no_removal=True)[2]
+                                        for ref in templated_references
+                                    )
                                 )
-                            )
-                        elif self.reward_name == "squadv2_metrics_precision":
-                            sequence_rewards.append(
-                                max(
-                                    compute_f1_precision_recall(ref, prediction, no_removal=True)[1]
-                                    for ref in templated_references
+                            elif self.reward_name == "squadv2_metrics_precision":
+                                sequence_rewards.append(
+                                    max(
+                                        compute_f1_precision_recall(ref, prediction, no_removal=True)[1]
+                                        for ref in templated_references
+                                    )
                                 )
-                            )
-                        elif self.reward_name == "squadv2_metrics_exact":
-                            sequence_rewards.append(
-                                max(compute_exact(ref, prediction, no_removal=True) for ref in templated_references)
-                            )
-                    complete_reward = sequence_rewards[-1]
-                    sample_returns = [complete_reward] + [complete_reward - reward for reward in sequence_rewards]
-                    # Last return is zero and we never use it.
-                    flattened_returns.extend(sample_returns[0:-1])
-                    per_example_returns.append(sample_returns[0:-1])
-                returns.append(per_example_returns)
-        return returns, flattened_returns
+                            elif self.reward_name == "squadv2_metrics_exact":
+                                sequence_rewards.append(
+                                    max(compute_exact(ref, prediction, no_removal=True) for ref in templated_references)
+                                )
+                    else:
+                        templated_references_expanded = [templated_references] * len(partial_predictions)
+                        print(templated_references_expanded)
+                        scores = self.qa_metric_model.compute_metric(partial_predictions, templated_references_expanded)
+                        sequence_rewards = scores.tolist()
+                        print(sequence_rewards)
+
+                    # Reward r_t = score(z1, z2, ..., zt) - score(z1, z2, ..., zt-1)
+                    prev_seq_reward = 0.0
+                    for seq_idx in range(len(sequence_rewards)):
+                        temp = sequence_rewards[seq_idx]
+                        sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
+                        prev_seq_reward = temp
+
+                    per_example_rewards.append(sequence_rewards)
+                rewards.append(per_example_rewards)
+        return rewards
 
     def compute_rewards(self, sample_gold_answers: List[List[str]], sample_outputs: List[List[str]]) -> List[List[float]]:
         """Depending on the reward function, call the necessary functions."""

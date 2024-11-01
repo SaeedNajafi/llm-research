@@ -15,6 +15,7 @@ from torch.optim.lr_scheduler import LRScheduler
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("checkpoint_folder", "./checkpoints/gemma2-1024-13", "a path for checkpoint.")
+flags.DEFINE_string("weights_base_folder", "/model-weights", "a path for pre-trained weights.")
 
 
 def checkpoint_exists(output_dir: str) -> bool:

@@ -369,9 +369,11 @@ class MyGenerationMixin(GenerationMixin):
         # 1. Handle `generation_config` and kwargs that might update it, and validate the `.generate()` call
         self._validate_model_class()
         tokenizer = kwargs.pop("tokenizer", None)  # Pull this out first, we only use it for stopping criteria
+        assistant_tokenizer = kwargs.pop("assistant_tokenizer", None)  # only used for assisted generation
+
         generation_config, model_kwargs = self._prepare_generation_config(generation_config, **kwargs)
         self._validate_model_kwargs(model_kwargs.copy())
-        self._validate_assistant(assistant_model)
+        self._validate_assistant(assistant_model, tokenizer, assistant_tokenizer)
 
         # 2. Set generation parameters if not already defined
         if synced_gpus is None:

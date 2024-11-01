@@ -30,7 +30,7 @@ flags.DEFINE_string("project_name", "llm_research", "name for these runs.")
 flags.DEFINE_string("experiment_type", "normal_no_icl", "normal_no_icl | normal_icl | explanation_icl | explanation_no_icl")
 flags.DEFINE_integer("train_batch_size", 8, "train batch size.")
 flags.DEFINE_integer("eval_batch_size", 8, "eval batch size.")
-flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
+
 
 
 def setup_wandb() -> Any:
@@ -54,8 +54,10 @@ def main(argv: Any) -> None:
     world_size = int(os.environ["WORLD_SIZE"])
 
     if torch.distributed.is_initialized():
-        if torch.cuda.is_available():
-            torch.cuda.set_device(local_rank)
+        if not torch.cuda.is_available():
+            raise Exception("We need cuda to run the code.")
+        num_gpus = torch.cuda.device_count()
+        gpu_ids = [num_gpus * local_rank + gpu_idx for gpu_idx in range(num_gpus)]
         clear_gpu_cache()
         setup_environ_flags(rank)
 
@@ -65,13 +67,27 @@ def main(argv: Any) -> None:
 
     # Initialize the model here.
     if FLAGS.llm_name == "gemma2":
+        torch.cuda.set_device(gpu_ids.pop())
         model = Gemma2QA(local_rank, rank)
+        if FLAGS.include_policy_ref_kl:
+            torch.cuda.set_device(gpu_ids.pop())
+            ref_model = Gemma2QA(local_rank, rank)
+            
 
     elif FLAGS.llm_name == "llama3":
+        torch.cuda.set_device(gpu_ids.pop())
         model = Llama3QA(local_rank, rank)
+        if FLAGS.include_policy_ref_kl:
+            torch.cuda.set_device(gpu_ids.pop())
+            ref_model = Llama3QA(local_rank, rank)
+            
 
     elif FLAGS.llm_name == "llama3.2":
+        torch.cuda.set_device(gpu_ids.pop())
         model = Llama32QA(local_rank, rank)
+        if FLAGS.include_policy_ref_kl:
+            torch.cuda.set_device(gpu_ids.pop())
+            ref_model = Llama32QA(local_rank, rank)
 
     if wandb_run:
         if FLAGS.use_peft:
@@ -85,8 +101,16 @@ def main(argv: Any) -> None:
         "iml",
         "iterative_finetuning",
         "reinforce_terminal_reward",
+        "teacher_forcing_reinforce"
     ]:
-        loss_calculator = LossCalculator(policy_lm=model, objective_type=FLAGS.objective_type, reward_name="squadv2_metrics_f1")
+        if FLAGS.metric_type in ["llm2vec", "sentence_t5"]:
+            # For these metrics, we will load the metric model on a separate gpu.
+            FLAGS.metric_device = gpu_ids.pop()
+        loss_calculator = LossCalculator(policy_lm=model,
+                                         objective_type=FLAGS.objective_type,
+                                         reward_name=FLAGS.metric_type,
+                                         weights_base_folder=FLAGS.weights_base_folder,
+                                         ref_policy_lm=ref_model if FLAGS.include_policy_ref_kl else None)
 
     if FLAGS.mode == "train":
         train_dataloader = create_squadv2_dataloader(

@@ -1,12 +1,16 @@
 """The main module for different objectives to train the policy (llm)."""
 
-from typing import List, Optional
+from typing import List, Optional, Any
+from itertools import chain
+from torch.utils.data import DataLoader
+from src.utils.general_utils import DictDataset
 
 import torch
-from absl import flags
+from absl import flags, logging
 
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
+from src.utils.rl_utils import compute_entropy_loss, form_returns
 
 FLAGS = flags.FLAGS
 
@@ -21,6 +25,9 @@ flags.DEFINE_string("reward_normalization_type", "zscore", "zscore | mml_normali
 flags.DEFINE_float("baseline_momentum", 0.9, "momentum used to compute the average reward in the RL baseline.")
 flags.DEFINE_boolean("compute_per_step_entropy", False, "Whether to add per-step entropy to the loss in RL training.")
 flags.DEFINE_float("entropy_coef", 0.1, "Coefficient used to mix per-step entropy loss in RL training.")
+flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
+flags.DEFINE_boolean("include_policy_ref_kl", False, "Whether to apply the KL divergence between the policy and the reference policy.")
+flags.DEFINE_float("policy_ref_kl_coef", 0.1, "Coefficient to apply the KL divergence between the policy and the reference policy.")
 
 
 class LossCalculator:
@@ -30,6 +37,7 @@ class LossCalculator:
         policy_lm: LLM,
         objective_type: str,
         reward_name: str,
+        weights_base_folder: str,
         value_lm: Optional[LLM] = None,
         ref_policy_lm: Optional[LLM] = None,
     ):
@@ -38,13 +46,19 @@ class LossCalculator:
         self.value_lm = value_lm
         self.ref_policy_lm = ref_policy_lm
         if FLAGS.with_baseline:
+            # For simple, average return baseline.
             self.baseline_reward = 0.0
         self.objective_type = objective_type
-        self.reward_calculator = RewardCalculator(reward_name=reward_name)
+        self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
 
-    def normalize_signals(self, signals: List[List[List[float]]], flat_signals: List[float]) -> List[List[torch.Tensor]]:
+    def normalize_signals(self, signals: List[List[List[float]]]) -> List[List[torch.Tensor]]:
         """Zscore or normalize between [-1, 1]."""
-        flat_signals_t = torch.tensor(flat_signals, dtype=torch.float64, device=self.policy_lm.device)
+        flatten_signals = []
+        for i in range(len(signals)):
+            for j in range(len(signals[i])):
+                flatten_signals.extend(signals[i][j])
+                
+        flat_signals_t = torch.tensor(flatten_signals, dtype=torch.float64, device=self.policy_lm.device)
         mean_s = flat_signals_t.mean()
         std_s = flat_signals_t.std()
         max_s = flat_signals_t.max()
@@ -71,8 +85,8 @@ class LossCalculator:
     def teacher_forcing_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         return self.policy_lm.train(batch)
 
-    def reinforce_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
-        """Use reinforce with per-step rewards to compute the loss."""
+    def sample_and_generate_details(self, batch: torch.utils.data.Dataset) -> Any:
+        """Compute per-step information while sampling."""
         assert FLAGS.rl_sample_size > 1
         num_iterative_calls = FLAGS.rl_sample_size // FLAGS.iterative_chunk_size
         generations = []
@@ -150,47 +164,120 @@ class LossCalculator:
             final_logits.append(logits_arr)
             samples.append(sample_arr)
             partial_samples.append(partial_samples_arr)
+        
+        return_data = {"samples": samples,
+                       "sequence_log_probs": sequence_log_probs,
+                       "actual_lens": actual_lens,
+                       "partial_samples": partial_samples,
+                       "labels_to_consider": final_labels_to_consider,
+                       "token_log_ps": token_log_ps,
+                       "logits": final_logits}
 
+        return return_data
+
+    def reinforce_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """Use reinforce with per-step rewards to compute the loss."""
+        sample_data = self.sample_and_generate_details(batch)
+        batch_size = len(batch["gold_answers"])
         # These are full sequence returns.
         # Compute the rewards.
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
-        per_step_returns, flat_returns = self.reward_calculator.compute_returns(
-            gold_answers, partial_samples, output_template=self.policy_lm.output_template
+        per_step_rewards = self.reward_calculator.compute_per_step_rewards(
+            gold_answers, sample_data["partial_samples"], output_template=self.policy_lm.output_template
         )
-        normalized_returns = self.normalize_signals(signals=per_step_returns, flat_signals=flat_returns)
+        normalized_per_step_rewards = self.normalize_signals(signals=per_step_rewards)
+        print("saeed")
+        print(normalized_per_step_rewards)
+        if FLAGS.include_policy_ref_kl:
+            # Compute log likelihood of the reference model for the samples.
+            cleaned_samples = []
+            for per_example_samples in partial_samples:
+                per_example_cleaned_samples = []
+                for sample_sequence in per_example_samples:
+                    # Last complete one!
+                    sample_output = sample_sequence[-1]
+                    per_example_cleaned_samples.append(sample_output)
+                cleaned_samples.append(per_example_cleaned_samples)
+
+            num_samples_per_example = FLAGS.rl_sample_size
+            input_texts = batch["texts"]
+            row_ids = batch["row_ids"]
+            expanded_input_texts = list(chain.from_iterable([[text] * num_samples_per_example for text in input_texts]))
+            expanded_row_ids = list(chain.from_iterable([[row_id] * num_samples_per_example for row_id in row_ids]))
+            flattened_sample_outputs = list(chain.from_iterable(cleaned_samples))
+            data = self.ref_policy_lm.prepare_text_for_train(
+                texts=expanded_input_texts, output_texts=flattened_sample_outputs, row_ids=expanded_row_ids
+            )
+            dataset = DictDataset(data)
+            dataloader = DataLoader(
+                dataset,
+                shuffle=False,
+                batch_size=len(dataset),
+                num_workers=1,
+            )
+            for ref_batch in dataloader:
+                _, ref_token_log_probs, _, _ = self.ref_policy_lm.train(ref_batch, per_step_scores=True, to_train=False)
+
+            # the sequence length in the token_log_probs has been shifted to the right by 1 position.
+            ref_token_log_probs = ref_token_log_probs.view(batch_size, FLAGS.rl_sample_size, -1)
+            ref_token_log_probs_arr = []
+            for b_idx in range(batch_size):
+                ref_token_log_probs_arr_per_example = []
+                for s_idx in range(FLAGS.rl_sample_size):
+                    ref_token_log_probs_arr_per_example_per_sample = []
+                    ref_token_log_prob_sequence = ref_token_log_probs[b_idx, s_idx, :]
+                    for ref_token_log_prob in ref_token_log_prob_sequence:
+                        if ref_token_log_prob.item() != 0.0:
+                            ref_token_log_probs_arr_per_example_per_sample.append(ref_token_log_prob.item())
+                    ref_token_log_probs_arr_per_example.append(ref_token_log_probs_arr_per_example_per_sample)
+                ref_token_log_probs_arr.append(ref_token_log_probs_arr_per_example)
+            
+            # normalize the ref log probs.
+            normalized_ref_token_log_probs_arr = self.normalize_signals(signals=ref_token_log_probs_arr)
+            # add ref_log_prob as a new reward.
+            for b_idx in range(batch_size):
+                for s_idx in range(FLAGS.rl_sample_size):
+                    sequence_rewards = normalized_per_step_rewards[b_idx][s_idx]
+                    ref_kl_sequence_rewards = normalized_ref_token_log_probs_arr[b_idx][s_idx]
+                    for seq_idx in range(len(sequence_rewards)):
+                        normalized_per_step_rewards[b_idx][s_idx][seq_idx] += FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
+
+
+        returns = form_returns(normalized_per_step_rewards)
+        print(returns)
+        normalized_returns = self.normalize_signals(returns)
+        print(normalized_returns)
         objective = 0.0
+        if FLAGS.with_baseline:
+            current_batch_sample_average_rewards = 0.0
         for b_idx in range(batch_size):
             for sample_idx in range(FLAGS.rl_sample_size):
-                sequence_token_log_ps = token_log_ps[b_idx][sample_idx]
+                sequence_token_log_ps = sample_data["token_log_ps"][b_idx][sample_idx]
                 sequence_returns = normalized_returns[b_idx][sample_idx]
+                if FLAGS.with_baseline:
+                    current_batch_sample_average_rewards += torch.mean(sequence_returns, dim=0)
+                    sequence_returns = sequence_returns - self.baseline_reward
                 objective += torch.sum(sequence_token_log_ps * sequence_returns)
+
+        if FLAGS.with_baseline:
+            new_baseline_reward = (current_batch_sample_average_rewards / FLAGS.rl_sample_size) / batch_size
+            self.baseline_reward = FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
+            msg = f"\nbaseline reward used: {self.baseline_reward}"
+            logging.info(msg)
+
         loss = -(objective / FLAGS.rl_sample_size) / batch_size
 
-        #     # Subtract the baseline value of the rewards.
-        #     if FLAGS.with_baseline:
-        #         # mean pulling over the best rewards per example.
-        #         max_normalized_rewards, _ = torch.max(normalized_rewards, dim=1, keepdim=True)
-        #         normalized_rewards -= self.baseline_reward
+        # Compute the per-step entropy if requested.
+        if FLAGS.compute_per_step_entropy:
+            entropy_loss = compute_entropy_loss(final_labels_to_consider, actual_lens, token_log_ps, final_logits)
+            msg = f"\nentropy loss computed: {entropy_loss}"
+            logging.info(msg)
+            coefficient = FLAGS.entropy_coef
+            if FLAGS.include_policy_ref_kl:
+                # necessary to train with kl penalty between ref and policy.
+                coefficient += FLAGS.policy_ref_kl_coef
+            loss += coefficient * entropy_loss
 
-        #         new_baseline_reward = torch.mean(torch.mean(max_normalized_rewards, dim=1), dim=0)
-        #         self.baseline_reward = (
-        #             FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
-        #         )
-
-        #     # Compute the per-step entropy if requested.
-        #     if FLAGS.compute_per_step_entropy:
-        #         entropy_masks = torch.where(labels_to_consider == -100, 0, 1)
-        #         distribution = Categorical(logits=logits)
-        #         sequence_entropy = torch.sum(distribution.entropy() * entropy_masks, dim=1) / actual_lens
-        #         sequence_entropy = sequence_entropy.view(batch_size, FLAGS.rl_sample_size)
-
-        #     if FLAGS.compute_per_step_entropy:
-        #         entropy_loss_part_one = -torch.mean(torch.mean(sequence_log_probs * sequence_entropy.detach(), dim=1), dim=0)
-        #         entropy_loss_part_two = -torch.mean(torch.mean(sequence_entropy, dim=1), dim=0)
-        #         entropy_loss = entropy_loss_part_one + entropy_loss_part_two
-        #         loss += FLAGS.entropy_coef * entropy_loss
-
-        #     return loss
         return loss
 
     def maximum_marginal_likelihood_loss(
@@ -316,3 +403,8 @@ class LossCalculator:
 
         elif self.objective_type == "reinforce":
             return self.reinforce_loss(batch)
+
+        elif self.objective_type == "teacher_forcing_reinforce":
+            return self.reinforce_loss(batch) + self.teacher_forcing_loss(batch)
+        
+        

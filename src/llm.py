@@ -26,7 +26,7 @@ from src.utils.model_utils import (
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
-    "model_path", "/model-weights/gemma-2-9b-it", "/model-weights/Meta-Llama-3-8B-Instruct | /model-weights/gemma-2-9b-it"
+    "base_llm_id", "gemma-2-9b-it", "llm id to use."
 )
 flags.DEFINE_integer("t_0", 10, "number of epochs before resetting the learning rate with scheduler.")
 flags.DEFINE_float("test_top_p", 0.9, "top_p value in nucleus sampling for inference.", upper_bound=1.0, lower_bound=0.0)
@@ -96,8 +96,9 @@ class LLM(torch.nn.Module):
         else:
             self.distributed_strategy = "fsdp"
 
+        base_model_path = f"{FLAGS.weights_base_folder}/{FLAGS.base_llm_id}"
         model = load_model(
-            FLAGS.model_path,
+            base_model_path,
             local_rank=self.local_rank,
             device=torch.cuda.current_device(),
             is_fsdp=self.distributed_strategy == "fsdp",
@@ -107,7 +108,7 @@ class LLM(torch.nn.Module):
         model.loss_func = loss_func
 
         # Load the tokenizer and add special tokens
-        self.tokenizer = AutoTokenizer.from_pretrained(FLAGS.model_path, padding_side="left")
+        self.tokenizer = AutoTokenizer.from_pretrained(base_model_path, padding_side="left")
 
         if extra_tokens is not None:
             self.tokenizer.add_special_tokens(extra_tokens)
@@ -130,7 +131,7 @@ class LLM(torch.nn.Module):
                 model.config.__setattr__(f"{extra_token_key}_id", extra_token_id)
                 model.generation_config.__setattr__(f"{extra_token_key}_id", extra_token_id)
 
-        print_model_size(model, FLAGS.model_path, self.rank)
+        print_model_size(model, base_model_path, self.rank)
 
         # Required while loading non-peft methods.
         self.is_peft_adapter_restored = False
@@ -200,6 +201,7 @@ class LLM(torch.nn.Module):
         inference_data = self.prepare_text_for_inference(texts, row_ids, gold_answers=gold_answers)
 
         train_data = {
+            "texts": texts,
             "row_ids": inference_data.pop("row_ids"),
             "lm_input_ids_for_train": input_encodings.input_ids,
             "lm_attention_mask_for_train": input_encodings.attention_mask,
@@ -235,20 +237,24 @@ class LLM(torch.nn.Module):
         dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
 
-    def train(self, batch: torch.utils.data.Dataset, per_step_scores: bool = False) -> torch.Tensor:
+    def train(self, batch: torch.utils.data.Dataset, per_step_scores: bool = False,
+              to_train: bool = True) -> torch.Tensor:
         """Using the llm, run a forward computation over the batch, compute the
         log probability over the batch.
 
         This will be used for training.
         """
-        self.train_mode_on()
+        if to_train:
+            self.train_mode_on()
+        else:
+            self.predict_mode_on()
         loaded_batch = self.data_to_device(
             batch, keys=["lm_input_ids_for_train", "lm_attention_mask_for_train", "lm_attention_mask_for_generation"]
         )
         input_ids = loaded_batch["lm_input_ids_for_train"]
         attention_mask = loaded_batch["lm_attention_mask_for_train"]
         original_len_without_answer = torch.sum(loaded_batch["lm_attention_mask_for_generation"], dim=1, keepdim=True)
-        with torch.set_grad_enabled(True):
+        with torch.set_grad_enabled(to_train):
             logits = lm_logits(
                 model=self.model,
                 input_ids=input_ids,
