@@ -1,15 +1,15 @@
 """The main module for different objectives to train the policy (llm)."""
 
-from typing import List, Optional, Any
 from itertools import chain
-from torch.utils.data import DataLoader
-from src.utils.general_utils import DictDataset
+from typing import Any, List, Optional
 
 import torch
 from absl import flags, logging
+from torch.utils.data import DataLoader
 
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
+from src.utils.general_utils import DictDataset
 from src.utils.rl_utils import compute_entropy_loss, form_returns
 
 FLAGS = flags.FLAGS
@@ -26,8 +26,12 @@ flags.DEFINE_float("baseline_momentum", 0.9, "momentum used to compute the avera
 flags.DEFINE_boolean("compute_per_step_entropy", False, "Whether to add per-step entropy to the loss in RL training.")
 flags.DEFINE_float("entropy_coef", 0.1, "Coefficient used to mix per-step entropy loss in RL training.")
 flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
-flags.DEFINE_boolean("include_policy_ref_kl", False, "Whether to apply the KL divergence between the policy and the reference policy.")
-flags.DEFINE_float("policy_ref_kl_coef", 0.1, "Coefficient to apply the KL divergence between the policy and the reference policy.")
+flags.DEFINE_boolean(
+    "include_policy_ref_kl", False, "Whether to apply the KL divergence between the policy and the reference policy."
+)
+flags.DEFINE_float(
+    "policy_ref_kl_coef", 0.1, "Coefficient to apply the KL divergence between the policy and the reference policy."
+)
 
 
 class LossCalculator:
@@ -43,21 +47,28 @@ class LossCalculator:
     ):
         super().__init__()
         self.policy_lm = policy_lm
-        self.value_lm = value_lm
-        self.ref_policy_lm = ref_policy_lm
+        if value_lm is not None:
+            self.value_lm = value_lm
+        if ref_policy_lm is not None:
+            self.ref_policy_lm = ref_policy_lm
         if FLAGS.with_baseline:
             # For simple, average return baseline.
             self.baseline_reward = 0.0
         self.objective_type = objective_type
         self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
 
-    def normalize_signals(self, signals: List[List[List[float]]]) -> List[List[torch.Tensor]]:
+    def normalize_signals(
+        self, signals: List[List[List[float]]], terminal_reward_only: bool = False
+    ) -> List[List[torch.Tensor]]:
         """Zscore or normalize between [-1, 1]."""
         flatten_signals = []
         for i in range(len(signals)):
             for j in range(len(signals[i])):
-                flatten_signals.extend(signals[i][j])
-                
+                if not terminal_reward_only:
+                    flatten_signals.extend(signals[i][j])
+                else:
+                    flatten_signals.append(signals[i][j][-1])
+
         flat_signals_t = torch.tensor(flatten_signals, dtype=torch.float64, device=self.policy_lm.device)
         mean_s = flat_signals_t.mean()
         std_s = flat_signals_t.std()
@@ -71,12 +82,24 @@ class LossCalculator:
             for sample_idx in range(sample_size):
                 sample_signals = signals[b_idx][sample_idx]
                 sample_signals = torch.tensor(sample_signals, dtype=torch.float64, device=self.policy_lm.device)
-                if FLAGS.reward_normalization_type == "zscore":
-                    normalized_signals = (sample_signals - mean_s) / (std_s + 1e-12)
-                elif FLAGS.reward_normalization_type == "normalize":
-                    normalized_signals = 2 * (sample_signals - min_s) / (max_s - min_s + 1e-12) - 1.0
-                elif FLAGS.reward_normalization_type == "no_normalize":
+                if not terminal_reward_only:
+                    if FLAGS.reward_normalization_type == "zscore":
+                        normalized_signals = (sample_signals - mean_s) / (std_s + 1e-12)
+                    elif FLAGS.reward_normalization_type == "normalize":
+                        normalized_signals = 2 * (sample_signals - min_s) / (max_s - min_s + 1e-12) - 1.0
+                    elif FLAGS.reward_normalization_type == "no_normalize":
+                        normalized_signals = sample_signals
+                else:
+                    if FLAGS.reward_normalization_type == "zscore":
+                        normalized_value = (sample_signals[-1] - mean_s) / (std_s + 1e-12)
+                    elif FLAGS.reward_normalization_type == "normalize":
+                        normalized_value = 2 * (sample_signals[-1] - min_s) / (max_s - min_s + 1e-12) - 1.0
+                    elif FLAGS.reward_normalization_type == "no_normalize":
+                        normalized_value = sample_signals[-1]
+
+                    sample_signals[-1] = normalized_value
                     normalized_signals = sample_signals
+
                 sample_normalized_signals.append(normalized_signals)
             normalized_signals_arr.append(sample_normalized_signals)
 
@@ -164,14 +187,16 @@ class LossCalculator:
             final_logits.append(logits_arr)
             samples.append(sample_arr)
             partial_samples.append(partial_samples_arr)
-        
-        return_data = {"samples": samples,
-                       "sequence_log_probs": sequence_log_probs,
-                       "actual_lens": actual_lens,
-                       "partial_samples": partial_samples,
-                       "labels_to_consider": final_labels_to_consider,
-                       "token_log_ps": token_log_ps,
-                       "logits": final_logits}
+
+        return_data = {
+            "samples": samples,
+            "sequence_log_probs": sequence_log_probs,
+            "actual_lens": actual_lens,
+            "partial_samples": partial_samples,
+            "labels_to_consider": final_labels_to_consider,
+            "token_log_ps": token_log_ps,
+            "logits": final_logits,
+        }
 
         return return_data
 
@@ -183,15 +208,16 @@ class LossCalculator:
         # Compute the rewards.
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
         per_step_rewards = self.reward_calculator.compute_per_step_rewards(
-            gold_answers, sample_data["partial_samples"], output_template=self.policy_lm.output_template
+            gold_answers,
+            sample_data["partial_samples"],
+            output_template=self.policy_lm.output_template,
+            terminal_reward_only=True,
         )
-        normalized_per_step_rewards = self.normalize_signals(signals=per_step_rewards)
-        print("saeed")
-        print(normalized_per_step_rewards)
+        normalized_per_step_rewards = self.normalize_signals(signals=per_step_rewards, terminal_reward_only=True)
         if FLAGS.include_policy_ref_kl:
             # Compute log likelihood of the reference model for the samples.
             cleaned_samples = []
-            for per_example_samples in partial_samples:
+            for per_example_samples in sample_data["partial_samples"]:
                 per_example_cleaned_samples = []
                 for sample_sequence in per_example_samples:
                     # Last complete one!
@@ -231,7 +257,7 @@ class LossCalculator:
                             ref_token_log_probs_arr_per_example_per_sample.append(ref_token_log_prob.item())
                     ref_token_log_probs_arr_per_example.append(ref_token_log_probs_arr_per_example_per_sample)
                 ref_token_log_probs_arr.append(ref_token_log_probs_arr_per_example)
-            
+
             # normalize the ref log probs.
             normalized_ref_token_log_probs_arr = self.normalize_signals(signals=ref_token_log_probs_arr)
             # add ref_log_prob as a new reward.
@@ -240,13 +266,12 @@ class LossCalculator:
                     sequence_rewards = normalized_per_step_rewards[b_idx][s_idx]
                     ref_kl_sequence_rewards = normalized_ref_token_log_probs_arr[b_idx][s_idx]
                     for seq_idx in range(len(sequence_rewards)):
-                        normalized_per_step_rewards[b_idx][s_idx][seq_idx] += FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
-
+                        normalized_per_step_rewards[b_idx][s_idx][seq_idx] += (
+                            FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
+                        )
 
         returns = form_returns(normalized_per_step_rewards)
-        print(returns)
         normalized_returns = self.normalize_signals(returns)
-        print(normalized_returns)
         objective = 0.0
         if FLAGS.with_baseline:
             current_batch_sample_average_rewards = 0.0
@@ -261,7 +286,9 @@ class LossCalculator:
 
         if FLAGS.with_baseline:
             new_baseline_reward = (current_batch_sample_average_rewards / FLAGS.rl_sample_size) / batch_size
-            self.baseline_reward = FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
+            self.baseline_reward = (
+                FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
+            )
             msg = f"\nbaseline reward used: {self.baseline_reward}"
             logging.info(msg)
 
@@ -269,7 +296,12 @@ class LossCalculator:
 
         # Compute the per-step entropy if requested.
         if FLAGS.compute_per_step_entropy:
-            entropy_loss = compute_entropy_loss(final_labels_to_consider, actual_lens, token_log_ps, final_logits)
+            entropy_loss = compute_entropy_loss(
+                sample_data["labels_to_consider"],
+                sample_data["actual_lens"],
+                sample_data["token_log_ps"],
+                sample_data["logits"],
+            )
             msg = f"\nentropy loss computed: {entropy_loss}"
             logging.info(msg)
             coefficient = FLAGS.entropy_coef
@@ -333,11 +365,7 @@ class LossCalculator:
             loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_returns, dim=1), dim=0)
             return loss
         elif reinforce_terminal_reward_only:
-            # This is reinforce style training.
-            flatten_returns = []
-            for batch_returns in sample_returns:
-                flatten_returns.extend(batch_returns)
-            normalized_returns = self.normalize_signals(signals=[sample_returns], flat_signals=flatten_returns)
+            normalized_returns = self.normalize_signals(signals=[sample_returns])
             normalized_returns = normalized_returns[0]  # remove extra []
             objective = 0.0
             for b_idx in range(batch_size):
@@ -406,5 +434,3 @@ class LossCalculator:
 
         elif self.objective_type == "teacher_forcing_reinforce":
             return self.reinforce_loss(batch) + self.teacher_forcing_loss(batch)
-        
-        

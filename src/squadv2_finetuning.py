@@ -8,12 +8,12 @@ import os
 from typing import Any
 
 import torch
+import wandb
 from absl import app, flags
 from torch.distributed.fsdp import FullStateDictConfig  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import StateDictType  # general model non-sharded, non-flattened params
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-import wandb
 from src.llm import Gemma2QA, Llama3QA, Llama32QA
 from src.metrics import qa_metric_squadv2_metrics
 from src.trainers import LossCalculator
@@ -30,7 +30,6 @@ flags.DEFINE_string("project_name", "llm_research", "name for these runs.")
 flags.DEFINE_string("experiment_type", "normal_no_icl", "normal_no_icl | normal_icl | explanation_icl | explanation_no_icl")
 flags.DEFINE_integer("train_batch_size", 8, "train batch size.")
 flags.DEFINE_integer("eval_batch_size", 8, "eval batch size.")
-
 
 
 def setup_wandb() -> Any:
@@ -72,7 +71,6 @@ def main(argv: Any) -> None:
         if FLAGS.include_policy_ref_kl:
             torch.cuda.set_device(gpu_ids.pop())
             ref_model = Gemma2QA(local_rank, rank)
-            
 
     elif FLAGS.llm_name == "llama3":
         torch.cuda.set_device(gpu_ids.pop())
@@ -80,7 +78,6 @@ def main(argv: Any) -> None:
         if FLAGS.include_policy_ref_kl:
             torch.cuda.set_device(gpu_ids.pop())
             ref_model = Llama3QA(local_rank, rank)
-            
 
     elif FLAGS.llm_name == "llama3.2":
         torch.cuda.set_device(gpu_ids.pop())
@@ -101,16 +98,18 @@ def main(argv: Any) -> None:
         "iml",
         "iterative_finetuning",
         "reinforce_terminal_reward",
-        "teacher_forcing_reinforce"
+        "teacher_forcing_reinforce",
     ]:
         if FLAGS.metric_type in ["llm2vec", "sentence_t5"]:
             # For these metrics, we will load the metric model on a separate gpu.
             FLAGS.metric_device = gpu_ids.pop()
-        loss_calculator = LossCalculator(policy_lm=model,
-                                         objective_type=FLAGS.objective_type,
-                                         reward_name=FLAGS.metric_type,
-                                         weights_base_folder=FLAGS.weights_base_folder,
-                                         ref_policy_lm=ref_model if FLAGS.include_policy_ref_kl else None)
+        loss_calculator = LossCalculator(
+            policy_lm=model,
+            objective_type=FLAGS.objective_type,
+            reward_name=FLAGS.metric_type,
+            weights_base_folder=FLAGS.weights_base_folder,
+            ref_policy_lm=ref_model if FLAGS.include_policy_ref_kl else None,
+        )
 
     if FLAGS.mode == "train":
         train_dataloader = create_squadv2_dataloader(

@@ -25,9 +25,7 @@ from src.utils.model_utils import (
 )
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string(
-    "base_llm_id", "gemma-2-9b-it", "llm id to use."
-)
+flags.DEFINE_string("base_llm_id", "gemma-2-9b-it", "llm id to use.")
 flags.DEFINE_integer("t_0", 10, "number of epochs before resetting the learning rate with scheduler.")
 flags.DEFINE_float("test_top_p", 0.9, "top_p value in nucleus sampling for inference.", upper_bound=1.0, lower_bound=0.0)
 flags.DEFINE_float(
@@ -237,8 +235,7 @@ class LLM(torch.nn.Module):
         dictionary to access the gpu tensors."""
         return {key: batch[key].to(self.device) for key in keys}
 
-    def train(self, batch: torch.utils.data.Dataset, per_step_scores: bool = False,
-              to_train: bool = True) -> torch.Tensor:
+    def train(self, batch: torch.utils.data.Dataset, per_step_scores: bool = False, to_train: bool = True) -> torch.Tensor:
         """Using the llm, run a forward computation over the batch, compute the
         log probability over the batch.
 

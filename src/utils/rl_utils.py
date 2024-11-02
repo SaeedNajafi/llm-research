@@ -45,6 +45,7 @@ def form_returns(rewards: List[List[torch.FloatTensor]]) -> List[List[torch.Floa
         returns.append(sample_returns)
     return returns
 
+
 def z_scoring(signal: torch.FloatTensor) -> torch.FloatTensor:
     """Perform normalization of the signal using z-scoring."""
     signal_mean = torch.mean(signal)

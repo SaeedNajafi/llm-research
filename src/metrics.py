@@ -10,20 +10,17 @@ import collections
 import math
 import re
 import string
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import pandas as pd
 import torch
 from absl import app, flags
-
 from llm2vec import LLM2Vec
 from peft import PeftModel
 from sentence_transformers import SentenceTransformer
-
-from src.utils.general_utils import clear_gpu_cache
-
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 
+from src.utils.general_utils import clear_gpu_cache
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("metric_device", "cuda:0", "The device per node to calculate the metric.")
@@ -66,8 +63,13 @@ class QAMetricModel:
     """Load and cache a model used for evaluating generative text
     generation."""
 
-    def __init__(self, device: str = "cuda:0", batch_size: int = 16, metric_type: str = "llm2vec",
-                 weights_base_folder: str = "McGill-NLP") -> None:
+    def __init__(
+        self,
+        device: str = "cuda:0",
+        batch_size: int = 16,
+        metric_type: str = "llm2vec",
+        weights_base_folder: str = "McGill-NLP",
+    ) -> None:
         """Save the gpu device and construct the model and cache it."""
         self.device = device
         self.batch_size = batch_size
@@ -80,7 +82,7 @@ class QAMetricModel:
             sentence_t5_model_id = f"{weights_base_folder}/sentence-t5-xxl"
             self.metric_model = SentenceTransformer(sentence_t5_model_id, device=self.device).eval()
 
-    def compute_metric(self, predictions: List[str], references: List[List[str]]) -> float:
+    def compute_metric(self, predictions: List[str], references: List[List[str]]) -> torch.Tensor:
         """Compute the metric for the given predictions and multiple
         references."""
         all_scores = []
@@ -357,14 +359,18 @@ class RewardCalculator:
                 device=FLAGS.metric_device,
                 batch_size=FLAGS.metric_batch_size,
                 metric_type=self.reward_name,
-                weights_base_folder=weights_base_folder
+                weights_base_folder=weights_base_folder,
             )
-            
 
     def compute_per_step_rewards(
-        self, gold_answers: List[List[str]], partial_outputs: List[List[List[str]]], output_template: str
+        self,
+        gold_answers: List[List[str]],
+        partial_outputs: List[List[List[str]]],
+        output_template: str,
+        terminal_reward_only: bool = False,
     ) -> List[List[List[float]]]:
         """Depending on the reward function, call the necessary functions.
+
         This is to compute the reward for each step.
         """
         rewards = []
@@ -374,7 +380,7 @@ class RewardCalculator:
             "squadv2_metrics_precision",
             "squadv2_metrics_exact",
             "llm2vec",
-            "sentence_t5"
+            "sentence_t5",
         ]:
             for batch_idx in range(len(gold_answers)):
                 per_example_rewards = []
@@ -413,17 +419,21 @@ class RewardCalculator:
                                 )
                     else:
                         templated_references_expanded = [templated_references] * len(partial_predictions)
-                        print(templated_references_expanded)
                         scores = self.qa_metric_model.compute_metric(partial_predictions, templated_references_expanded)
                         sequence_rewards = scores.tolist()
-                        print(sequence_rewards)
 
-                    # Reward r_t = score(z1, z2, ..., zt) - score(z1, z2, ..., zt-1)
-                    prev_seq_reward = 0.0
-                    for seq_idx in range(len(sequence_rewards)):
-                        temp = sequence_rewards[seq_idx]
-                        sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
-                        prev_seq_reward = temp
+                    if not terminal_reward_only:
+                        # Reward r_t = score(z1, z2, ..., zt) - score(z1, z2, ..., zt-1)
+                        prev_seq_reward = 0.0
+                        for seq_idx in range(len(sequence_rewards)):
+                            temp = sequence_rewards[seq_idx]
+                            sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
+                            prev_seq_reward = temp
+                    else:
+                        # only give terminal rewards.
+                        zeros = [0.0] * len(sequence_rewards)
+                        zeros[-1] = sequence_rewards[-1]
+                        sequence_rewards = zeros
 
                     per_example_rewards.append(sequence_rewards)
                 rewards.append(per_example_rewards)
