@@ -265,10 +265,19 @@ class LossCalculator:
                 for s_idx in range(FLAGS.rl_sample_size):
                     sequence_rewards = normalized_per_step_rewards[b_idx][s_idx]
                     ref_kl_sequence_rewards = normalized_ref_token_log_probs_arr[b_idx][s_idx]
-                    for seq_idx in range(len(sequence_rewards)):
-                        normalized_per_step_rewards[b_idx][s_idx][seq_idx] += (
-                            FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
-                        )
+                    try:
+                        for seq_idx in range(len(sequence_rewards)):
+                            normalized_per_step_rewards[b_idx][s_idx][seq_idx] += (
+                                FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
+                            )
+                    except Exception:
+                        print("saeed")
+                        print(len(sequence_rewards))
+                        print(len(ref_kl_sequence_rewards))
+                        print(len(ref_token_log_probs_arr[b_idx][s_idx]))
+                        print(ref_token_log_probs.size())
+                        print(sample_data["actual_lens"])
+                        exit()
 
         returns = form_returns(normalized_per_step_rewards)
         normalized_returns = self.normalize_signals(returns)
