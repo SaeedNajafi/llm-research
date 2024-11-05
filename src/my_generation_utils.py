@@ -276,6 +276,7 @@ class MyGenerationMixin(GenerationMixin):
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         mix_in_model: Optional["PreTrainedModel"] = None,
         mix_in_alpha: Optional[float] = 0.2,
+        teacher_forcing_labels: Optional[torch.LongTensor] = None,
         iterative_rl_sampling: Optional[bool] = False,
         **kwargs,
     ) -> Iterator[Union[GenerateOutput, torch.LongTensor]]:
@@ -615,6 +616,7 @@ class MyGenerationMixin(GenerationMixin):
                         streamer=streamer,
                         mix_in_model=mix_in_model,
                         mix_in_alpha=mix_in_alpha,
+                        teacher_forcing_labels=teacher_forcing_labels,
                         **deepcopy(model_kwargs),
                     )
 
@@ -656,6 +658,12 @@ class MyGenerationMixin(GenerationMixin):
                     is_encoder_decoder=self.config.is_encoder_decoder,
                     **model_kwargs,
                 )
+                # Also expand the teacher forcing labels.
+                if teacher_forcing_labels is not None:
+                    teacher_forcing_labels = teacher_forcing_labels.repeat_interleave(
+                        generation_config.num_return_sequences, dim=0
+                    )
+
                 # 12. run sample (it degenerates to greedy search when `generation_config.do_sample=False`)
                 result = self._sample(
                     input_ids,
@@ -666,6 +674,7 @@ class MyGenerationMixin(GenerationMixin):
                     streamer=streamer,
                     mix_in_model=mix_in_model,
                     mix_in_alpha=mix_in_alpha,
+                    teacher_forcing_labels=teacher_forcing_labels,
                     **model_kwargs,
                 )
 
@@ -834,6 +843,7 @@ class MyGenerationMixin(GenerationMixin):
         streamer: Optional["BaseStreamer"],
         mix_in_model: Optional["PreTrainedModel"] = None,
         mix_in_alpha: Optional[float] = 0.2,
+        teacher_forcing_labels: Optional[torch.LongTensor] = None,
         **model_kwargs,
     ) -> Union[GenerateNonBeamOutput, torch.LongTensor]:
         r"""Generates sequences of token ids for models with a language modeling
@@ -958,17 +968,22 @@ class MyGenerationMixin(GenerationMixin):
                 m_next_token_logits = m_outputs.logits.clone()[:, -1, :].float()
                 m_next_token_scores = logits_processor(input_ids, m_next_token_logits)
 
-            # token selection
-            if do_sample:
-                probs = nn.functional.softmax(next_token_scores, dim=-1)
-                if mix_in_model is not None:
-                    m_probs = nn.functional.softmax(m_next_token_scores, dim=-1)
-                    probs = mix_in_alpha * m_probs.to(device=probs.get_device()) + (1.0 - mix_in_alpha) * probs
-
-                # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
-                next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            # If teacher forcing is enabled, then we stop sampling and only
+            # pick the tokens provided by the teacher-forcing tensor.
+            if teacher_forcing_labels is not None:
+                next_tokens = teacher_forcing_labels[:, cur_len]
             else:
-                next_tokens = torch.argmax(probs, dim=-1)
+                # token selection
+                if do_sample:
+                    probs = nn.functional.softmax(next_token_scores, dim=-1)
+                    if mix_in_model is not None:
+                        m_probs = nn.functional.softmax(m_next_token_scores, dim=-1)
+                        probs = mix_in_alpha * m_probs.to(device=probs.get_device()) + (1.0 - mix_in_alpha) * probs
+
+                    # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
+                    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+                else:
+                    next_tokens = torch.argmax(probs, dim=-1)
 
             # finished sentences should have their next token be a padding token
             if has_eos_stopping_criteria:

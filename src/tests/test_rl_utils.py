@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from src.utils.general_utils import set_random_seed
-from src.utils.rl_utils import compute_entropy_loss
+from src.utils.rl_utils import compute_entropy_loss, form_returns, normalize_signals
 
 
 @pytest.fixture(scope="session", autouse="True")
@@ -60,3 +60,35 @@ def test_compute_entropy_loss() -> None:
         perform_length_normalization=True,
     )
     assert round(loss_with_norm_mask.item(), 5) == -0.34657
+
+
+def test_form_returns() -> None:
+    rewards = [torch.FloatTensor([1, 2, 3]), torch.FloatTensor([0, 1, 1])]
+    returns = form_returns(rewards)
+    assert len(returns) == 2
+    assert returns[0] == [6, 5, 3]
+    assert returns[1] == [2, 2, 1]
+
+
+def test_normalize_signals() -> None:
+    signals = [[1.0, 2.0, 3.0], [4.0, 5.0]]
+    norm_signals = normalize_signals(signals, normalization_type="linear", terminal_reward_only=True)
+    assert len(norm_signals) == 2
+    assert norm_signals[0].tolist() == [1.0, 2.0, 0.0]
+    assert [round(each, 5) for each in norm_signals[1].tolist()] == [4.0, 1.0]
+
+    norm_signals = normalize_signals(signals, normalization_type="no_normalize", terminal_reward_only=True)
+    assert norm_signals[0].tolist() == [1.0, 2.0, 3.0]
+    assert norm_signals[1].tolist() == [4.0, 5.0]
+
+    norm_signals = normalize_signals(signals, normalization_type="zscore", terminal_reward_only=True)
+    assert [round(each, 5) for each in norm_signals[0].tolist()] == [1.0, 2.0, -0.70711]
+    assert [round(each, 5) for each in norm_signals[1].tolist()] == [4.0, 0.70711]
+
+    norm_signals = normalize_signals(signals, normalization_type="zscore", terminal_reward_only=False)
+    assert [round(each, 5) for each in norm_signals[0].tolist()] == [-1.26491, -0.63246, 0.0]
+    assert [round(each, 5) for each in norm_signals[1].tolist()] == [0.63246, 1.26491]
+
+    norm_signals = normalize_signals(signals, normalization_type="no_normalize", terminal_reward_only=False)
+    assert norm_signals[0].tolist() == [1.0, 2.0, 3.0]
+    assert norm_signals[1].tolist() == [4.0, 5.0]

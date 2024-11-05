@@ -39,33 +39,62 @@ def compute_entropy_loss(
     return loss
 
 
-def form_returns(rewards: List[List[torch.FloatTensor]]) -> List[List[torch.FloatTensor]]:
+def form_returns(rewards: List[torch.Tensor]) -> List[torch.Tensor]:
     """Compute returns based on any rewards."""
     returns = []
     for batch_idx in range(len(rewards)):
-        sample_returns = []
-        for sample_idx in range(len(rewards[batch_idx])):
-            reward_sequence = rewards[batch_idx][sample_idx]
-            cum_sum = torch.cumsum(reward_sequence, dim=0)
-            full_sum = cum_sum[-1]
-            sequence_returns = torch.cat((full_sum.reshape(1), full_sum - cum_sum[0:-1]), dim=0)
-            sample_returns.append(sequence_returns.tolist())
-        returns.append(sample_returns)
+        reward_sequence = rewards[batch_idx]
+        cum_sum = torch.cumsum(reward_sequence, dim=0)
+        full_sum = cum_sum[-1]
+        sequence_returns = torch.cat((full_sum.reshape(1), full_sum - cum_sum[0:-1]), dim=0)
+        returns.append(sequence_returns.tolist())
     return returns
 
 
-def z_scoring(signal: torch.FloatTensor) -> torch.FloatTensor:
-    """Perform normalization of the signal using z-scoring."""
-    signal_mean = torch.mean(signal)
-    signal_std = torch.std(signal)
-    return (signal - signal_mean) / (signal_std + 1e-12)
+def normalize_signals(
+    signals: List[List[float]], normalization_type: str, terminal_reward_only: bool = False
+) -> List[torch.Tensor]:
+    """Zscore or normalize between [-1, 1]."""
+    flatten_signals = []
+    for each_signal in signals:
+        if not terminal_reward_only:
+            flatten_signals.extend(each_signal)
+        else:
+            terminal_signal = each_signal[-1]
+            flatten_signals.append(terminal_signal)
 
+    flat_signals_t = torch.tensor(flatten_signals, dtype=torch.float64)
+    mean_s = flat_signals_t.mean()
+    std_s = flat_signals_t.std()
+    max_s = flat_signals_t.max()
+    min_s = flat_signals_t.min()
+    normalized_signals_arr = []
 
-def normalize(signal: torch.FloatTensor) -> torch.FloatTensor:
-    """Perform normalization of the signal to be between [-1, 1]"""
-    signal_max = torch.max(signal)
-    signal_min = torch.min(signal)
-    return 2 * (signal - signal_min) / (signal_max - signal_min + 1e-12) - 1.0
+    for sample_signals in signals:
+        sample_signals = torch.tensor(sample_signals, dtype=torch.float64)
+        if not terminal_reward_only:
+            if normalization_type == "zscore":
+                normalized_signals = (sample_signals - mean_s) / (std_s + 1e-12)
+            elif normalization_type == "linear":
+                normalized_signals = (sample_signals - min_s) / (max_s - min_s + 1e-12)
+            elif normalization_type == "no_normalize":
+                normalized_signals = sample_signals
+        else:
+            terminal_signal = sample_signals[-1]
+            if normalization_type == "zscore":
+                normalized_value = (terminal_signal - mean_s) / (std_s + 1e-12)
+            elif normalization_type == "linear":
+                normalized_value = (terminal_signal - min_s) / (max_s - min_s + 1e-12)
+            elif normalization_type == "no_normalize":
+                normalized_value = terminal_signal
+
+            # Only change the terminal reward, rest are zeros.
+            sample_signals[-1] = normalized_value
+            normalized_signals = sample_signals
+
+        normalized_signals_arr.append(normalized_signals)
+
+    return normalized_signals_arr
 
 
 def rloo_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:

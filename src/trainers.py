@@ -57,54 +57,6 @@ class LossCalculator:
         self.objective_type = objective_type
         self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
 
-    def normalize_signals(
-        self, signals: List[List[List[float]]], terminal_reward_only: bool = False
-    ) -> List[List[torch.Tensor]]:
-        """Zscore or normalize between [-1, 1]."""
-        flatten_signals = []
-        for i in range(len(signals)):
-            for j in range(len(signals[i])):
-                if not terminal_reward_only:
-                    flatten_signals.extend(signals[i][j])
-                else:
-                    flatten_signals.append(signals[i][j][-1])
-
-        flat_signals_t = torch.tensor(flatten_signals, dtype=torch.float64, device=self.policy_lm.device)
-        mean_s = flat_signals_t.mean()
-        std_s = flat_signals_t.std()
-        max_s = flat_signals_t.max()
-        min_s = flat_signals_t.min()
-        batch_size = len(signals)
-        normalized_signals_arr = []
-        for b_idx in range(batch_size):
-            sample_size = len(signals[b_idx])
-            sample_normalized_signals = []
-            for sample_idx in range(sample_size):
-                sample_signals = signals[b_idx][sample_idx]
-                sample_signals = torch.tensor(sample_signals, dtype=torch.float64, device=self.policy_lm.device)
-                if not terminal_reward_only:
-                    if FLAGS.reward_normalization_type == "zscore":
-                        normalized_signals = (sample_signals - mean_s) / (std_s + 1e-12)
-                    elif FLAGS.reward_normalization_type == "normalize":
-                        normalized_signals = 2 * (sample_signals - min_s) / (max_s - min_s + 1e-12) - 1.0
-                    elif FLAGS.reward_normalization_type == "no_normalize":
-                        normalized_signals = sample_signals
-                else:
-                    if FLAGS.reward_normalization_type == "zscore":
-                        normalized_value = (sample_signals[-1] - mean_s) / (std_s + 1e-12)
-                    elif FLAGS.reward_normalization_type == "normalize":
-                        normalized_value = 2 * (sample_signals[-1] - min_s) / (max_s - min_s + 1e-12) - 1.0
-                    elif FLAGS.reward_normalization_type == "no_normalize":
-                        normalized_value = sample_signals[-1]
-
-                    sample_signals[-1] = normalized_value
-                    normalized_signals = sample_signals
-
-                sample_normalized_signals.append(normalized_signals)
-            normalized_signals_arr.append(sample_normalized_signals)
-
-        return normalized_signals_arr
-
     def teacher_forcing_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         return self.policy_lm.train(batch)
 
