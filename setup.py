@@ -6,7 +6,7 @@ from setuptools import find_packages, setup
 
 HERE = os.path.abspath(os.path.dirname(__file__))
 README = open(os.path.join(HERE, "README.md")).read()
-VERSION = "0.4"
+VERSION = "0.5"
 
 # Publicly Available Packages (PyPi)
 INSTALL_REQUIRES = [

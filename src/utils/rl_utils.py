@@ -9,6 +9,7 @@ def compute_entropy_loss(
     actual_lens: torch.LongTensor,
     token_log_ps: List[List[torch.FloatTensor]],
     logits: List[List[torch.FloatTensor]],
+    approximate_entropy: bool = False
 ) -> torch.Tensor:
     """Compute loss for per-step entropy."""
     batch_size = len(labels_to_consider)
@@ -20,16 +21,29 @@ def compute_entropy_loss(
             labels_per_sample = labels_to_consider[b_idx][s_idx]
             actual_lens_per_sample = actual_lens[b_idx, s_idx]
             entropy_masks_per_sample = torch.where(labels_per_sample == -100, 0, 1)
-            distribution_per_sample = Categorical(logits=logits[b_idx][s_idx])
-            entropy_per_sample = distribution_per_sample.entropy() * entropy_masks_per_sample
             token_log_ps_per_sample = token_log_ps[b_idx][s_idx]
-            prefix_log_ps_per_sample = torch.cumsum(token_log_ps_per_sample, dim=0)
-            part_one = prefix_log_ps_per_sample * entropy_per_sample.detach()
-            part_two = entropy_per_sample
-            objective += torch.sum(part_one + part_two, dim=0) / actual_lens_per_sample
+            if not approximate_entropy:
+                distribution_per_sample = Categorical(logits=logits[b_idx][s_idx])
+                entropy_per_sample = distribution_per_sample.entropy() * entropy_masks_per_sample
+                prefix_log_ps_per_sample = torch.cumsum(token_log_ps_per_sample, dim=0)
+
+                # shift left by one element and prepend by value 1.0
+                seq_len = prefix_log_ps_per_sample.size()
+                prior_log_p = 1.0
+                for i in range(seq_len):
+                    temp = prefix_log_ps_per_sample[i]
+                    prefix_log_ps_per_sample[i] = prior_log_p
+                    prior_log_p = temp
+
+                part_one = prefix_log_ps_per_sample * entropy_per_sample.detach()
+                part_two = entropy_per_sample
+                objective += torch.sum(part_one + part_two, dim=0) / actual_lens_per_sample
+            else:
+                objective += torch.sum(-token_log_ps_per_sample * entropy_masks_per_sample, dim=0) / actual_lens_per_sample
+
         loss += -objective / sample_size
     return loss / batch_size
-
+        
 
 def form_returns(rewards: List[List[torch.FloatTensor]]) -> List[List[torch.FloatTensor]]:
     """Compute returns based on any rewards."""
