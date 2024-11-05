@@ -56,7 +56,8 @@ def main(argv: Any) -> None:
         if not torch.cuda.is_available():
             raise Exception("We need cuda to run the code.")
         num_gpus = torch.cuda.device_count()
-        print(num_gpus)
+        print("This is the number of gpus:", num_gpus)
+        print("This is the local rank:", local_rank)
         gpu_ids = [num_gpus * local_rank + gpu_idx for gpu_idx in range(num_gpus)]
         clear_gpu_cache()
         setup_environ_flags(rank)
