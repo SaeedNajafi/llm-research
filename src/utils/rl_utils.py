@@ -5,30 +5,38 @@ from torch.distributions import Categorical
 
 
 def compute_entropy_loss(
-    labels_to_consider: List[List[torch.FloatTensor]],
+    labels_to_consider: List[torch.FloatTensor],
     actual_lens: torch.LongTensor,
-    token_log_ps: List[List[torch.FloatTensor]],
-    logits: List[List[torch.FloatTensor]],
+    token_log_ps: List[torch.FloatTensor],
+    logits: List[torch.FloatTensor],
+    approximate_entropy: bool = False,
+    perform_length_normalization: bool = True,
 ) -> torch.Tensor:
     """Compute loss for per-step entropy."""
+
     batch_size = len(labels_to_consider)
-    loss = 0.0
+    objective = 0.0
     for b_idx in range(batch_size):
-        objective = 0.0
-        sample_size = len(labels_to_consider[b_idx])
-        for s_idx in range(sample_size):
-            labels_per_sample = labels_to_consider[b_idx][s_idx]
-            actual_lens_per_sample = actual_lens[b_idx, s_idx]
-            entropy_masks_per_sample = torch.where(labels_per_sample == -100, 0, 1)
-            distribution_per_sample = Categorical(logits=logits[b_idx][s_idx])
-            entropy_per_sample = distribution_per_sample.entropy() * entropy_masks_per_sample
-            token_log_ps_per_sample = token_log_ps[b_idx][s_idx]
-            prefix_log_ps_per_sample = torch.cumsum(token_log_ps_per_sample, dim=0)
-            part_one = prefix_log_ps_per_sample * entropy_per_sample.detach()
-            part_two = entropy_per_sample
-            objective += torch.sum(part_one + part_two, dim=0) / actual_lens_per_sample
-        loss += -objective / sample_size
-    return loss / batch_size
+        labels_per_example = labels_to_consider[b_idx]
+        actual_lens_per_example = actual_lens[b_idx]
+        if not perform_length_normalization:
+            actual_lens_per_example = 1.0
+        entropy_masks_per_example = torch.where(labels_per_example == -100, 0, 1)
+        token_log_ps_per_example = token_log_ps[b_idx]
+        if not approximate_entropy:
+            distribution_per_example = Categorical(logits=logits[b_idx])
+            entropy_per_example = distribution_per_example.entropy() * entropy_masks_per_example
+            prefix_log_ps_per_example = torch.cumsum(token_log_ps_per_example, dim=0)
+            # token log p will be multiplied by the prior log p.
+            shifted_prefix_log_ps_per_example = torch.roll(prefix_log_ps_per_example, 1, dims=0)
+            shifted_prefix_log_ps_per_example[0] = 1.0
+            part_one = shifted_prefix_log_ps_per_example * entropy_per_example.detach()
+            part_two = entropy_per_example
+            objective += torch.sum(part_one + part_two, dim=0) / actual_lens_per_example
+        else:
+            objective += torch.sum(-token_log_ps_per_example * entropy_masks_per_example, dim=0) / actual_lens_per_example
+    loss = -objective / batch_size
+    return loss
 
 
 def form_returns(rewards: List[List[torch.FloatTensor]]) -> List[List[torch.FloatTensor]]:
