@@ -322,11 +322,12 @@ class LossCalculator:
         for b_idx in range(batch_size):
             sample_arr = []
             for call_idx in range(num_iterative_calls):
-                sample_arr.extend(generations[call_idx][b_idx][0])
+                samples_strings = generations[call_idx][b_idx][0]
+                sample_arr.extend(samples_strings)
 
             # Add extra third dimension.
-            sample_arr = [[each] for each in sample_arr]
-            samples.append(sample_arr)
+            sample_arr_extended = [[each] for each in sample_arr]
+            samples.append(sample_arr_extended)
 
         sample_scores = self.reward_calculator.compute_per_step_rewards(
             gold_answers, partial_outputs=samples, terminal_reward_only=True
