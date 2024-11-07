@@ -54,7 +54,7 @@ def form_returns(rewards: List[torch.Tensor]) -> List[torch.Tensor]:
 def normalize_signals(
     signals: List[List[float]], normalization_type: str, terminal_reward_only: bool = False
 ) -> List[torch.Tensor]:
-    """Zscore or normalize between [-1, 1]."""
+    """Zscore or normalize between [0, 1]."""
     flatten_signals = []
     for each_signal in signals:
         if not terminal_reward_only:

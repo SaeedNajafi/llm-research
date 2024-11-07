@@ -294,6 +294,7 @@ class LLM(torch.nn.Module):
         per_step_scores: bool = False,
         iterative_rl_sampling: bool = False,
         generate_partial_sequences: bool = False,
+        teacher_forcing_labels: Optional[torch.Tensor] = None,
     ) -> List[LLMGenerationOutput]:
         """Using the llm, generate new text.
 
@@ -330,6 +331,7 @@ class LLM(torch.nn.Module):
                             eos_token_id=self.terminators,
                             pad_token_id=self.tokenizer.pad_token_id,
                             iterative_rl_sampling=iterative_rl_sampling,
+                            teacher_forcing_labels=teacher_forcing_labels,
                         )
                     )
             elif self.distributed_strategy == "ddp":
@@ -350,6 +352,7 @@ class LLM(torch.nn.Module):
                         eos_token_id=self.terminators,
                         pad_token_id=self.tokenizer.pad_token_id,
                         iterative_rl_sampling=iterative_rl_sampling,
+                        teacher_forcing_labels=teacher_forcing_labels,
                     )
                 )
 

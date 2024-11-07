@@ -10,7 +10,7 @@ import collections
 import math
 import re
 import string
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -285,7 +285,9 @@ def qa_metric_sentence_similarity(prediction_file: str) -> Dict[str, float]:
     global qa_metric_model
     if qa_metric_model is None:
         qa_metric_model = QAMetricModel(
-            device=FLAGS.metric_device, batch_size=FLAGS.metric_batch_size, metric_type=FLAGS.metric_type
+            device=FLAGS.metric_device,
+            batch_size=FLAGS.metric_batch_size,
+            metric_type=FLAGS.metric_type,
         )
 
     df = pd.read_csv(prediction_file, delimiter=",")
@@ -366,7 +368,8 @@ class RewardCalculator:
         self,
         gold_answers: List[List[str]],
         partial_outputs: List[List[List[str]]],
-        output_template: str,
+        output_template: Optional[str] = None,
+        templated_rewards: bool = False,
         terminal_reward_only: bool = False,
     ) -> List[List[List[float]]]:
         """Depending on the reward function, call the necessary functions.
@@ -387,7 +390,10 @@ class RewardCalculator:
                 for sample_idx in range(len(gold_answers[batch_idx])):
                     gold_answer_string = gold_answers[batch_idx][sample_idx]
                     references = str(gold_answer_string).split("_@_")
-                    templated_references = [output_template.format(output=f"Final Answer: {ref}") for ref in references]
+                    if templated_rewards and (output_template is not None):
+                        templated_references = [output_template.format(output=f"Final Answer: {ref}") for ref in references]
+                    else:
+                        templated_references = references
                     partial_predictions = partial_outputs[batch_idx][sample_idx]
                     sequence_rewards = []
                     if self.qa_metric_model is None:
@@ -395,27 +401,30 @@ class RewardCalculator:
                             if self.reward_name == "squadv2_metrics_f1":
                                 sequence_rewards.append(
                                     max(
-                                        compute_f1_precision_recall(ref, prediction, no_removal=True)[0]
+                                        compute_f1_precision_recall(ref, prediction, no_removal=templated_rewards)[0]
                                         for ref in templated_references
                                     )
                                 )
                             elif self.reward_name == "squadv2_metrics_recall":
                                 sequence_rewards.append(
                                     max(
-                                        compute_f1_precision_recall(ref, prediction, no_removal=True)[2]
+                                        compute_f1_precision_recall(ref, prediction, no_removal=templated_rewards)[2]
                                         for ref in templated_references
                                     )
                                 )
                             elif self.reward_name == "squadv2_metrics_precision":
                                 sequence_rewards.append(
                                     max(
-                                        compute_f1_precision_recall(ref, prediction, no_removal=True)[1]
+                                        compute_f1_precision_recall(ref, prediction, no_removal=templated_rewards)[1]
                                         for ref in templated_references
                                     )
                                 )
                             elif self.reward_name == "squadv2_metrics_exact":
                                 sequence_rewards.append(
-                                    max(compute_exact(ref, prediction, no_removal=True) for ref in templated_references)
+                                    max(
+                                        compute_exact(ref, prediction, no_removal=templated_rewards)
+                                        for ref in templated_references
+                                    )
                                 )
                     else:
                         templated_references_expanded = [templated_references] * len(partial_predictions)
@@ -429,6 +438,7 @@ class RewardCalculator:
                             temp = sequence_rewards[seq_idx]
                             sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
                             prev_seq_reward = temp
+
                     else:
                         # only give terminal rewards.
                         zeros = [0.0] * len(sequence_rewards)
@@ -438,32 +448,6 @@ class RewardCalculator:
                     per_example_rewards.append(sequence_rewards)
                 rewards.append(per_example_rewards)
         return rewards
-
-    def compute_rewards(self, sample_gold_answers: List[List[str]], sample_outputs: List[List[str]]) -> List[List[float]]:
-        """Depending on the reward function, call the necessary functions."""
-        sample_rewards = []
-        if self.reward_name in [
-            "squadv2_metrics_f1",
-            "squadv2_metrics_recall",
-            "squadv2_metrics_precision",
-            "squadv2_metrics_exact",
-        ]:
-            for batch_idx in range(len(sample_gold_answers)):
-                per_example_rewards = []
-                for sample_idx in range(len(sample_gold_answers[batch_idx])):
-                    gold_answer_string = sample_gold_answers[batch_idx][sample_idx]
-                    references = str(gold_answer_string).split("_@_")
-                    prediction = sample_outputs[batch_idx][sample_idx]
-                    if self.reward_name == "squadv2_metrics_f1":
-                        per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[0] for ref in references))
-                    elif self.reward_name == "squadv2_metrics_recall":
-                        per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[2] for ref in references))
-                    elif self.reward_name == "squadv2_metrics_precision":
-                        per_example_rewards.append(max(compute_f1_precision_recall(ref, prediction)[1] for ref in references))
-                    elif self.reward_name == "squadv2_metrics_exact":
-                        per_example_rewards.append(max(compute_exact(ref, prediction) for ref in references))
-                sample_rewards.append(per_example_rewards)
-        return sample_rewards
 
 
 def main(argv: Any) -> None:
