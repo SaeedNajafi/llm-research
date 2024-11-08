@@ -40,7 +40,7 @@ pip3 install --upgrade pip
 
 echo "Install torch."
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+# conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
 # pip3 install tensorflow tensorflow-hub
 
 echo "Install the editable version of llm-research."
@@ -51,10 +51,8 @@ export NCCL_HOME=$CONDA_PREFIX
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
 
 # echo "Install flash-attention and vllm-flash-attn"
-
-# pip3 install --no-cache-dir flash-attn --no-build-isolation
-
-# pip3 install vllm ray llvmlite vllm-flash-attn
+pip3 install --no-cache-dir flash-attn --no-build-isolation
+pip3 install vllm ray llvmlite vllm-flash-attn
 
 # echo "Install flashinfer for vllm and gemma2 models."
 # pip3 install flashinfer -i https://flashinfer.ai/whl/cu124/torch2.4
