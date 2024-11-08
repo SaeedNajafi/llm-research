@@ -146,17 +146,13 @@ def train(
 
                         # regular backpropagation when fp16 is not used
                         loss.backward()
-                        # find the gradient norms.
-                        grads = []
-                        for p in model.model.parameters():
-                            if p.grad is not None:
-                                grads.append(torch.norm(p.grad) ** 2)
-                        grad_norm = torch.sqrt(sum(grads)).detach().tolist()
                         if FLAGS.gradient_clipping and FLAGS.gradient_clipping_threshold > 0.0:
                             if model.distributed_strategy == "fsdp":
-                                model.model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
+                                grad_norm = model.model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
                             elif model.distributed_strategy == "ddp":
-                                torch.nn.utils.clip_grad_norm_(model.model.parameters(), FLAGS.gradient_clipping_threshold)
+                                grad_norm = torch.nn.utils.clip_grad_norm_(
+                                    model.model.parameters(), FLAGS.gradient_clipping_threshold
+                                )
                         model.optimizer.step()
                         model.optimizer.zero_grad()
                         pbar.update(1)
@@ -184,7 +180,7 @@ def train(
                                     "train/epoch": epoch + 1,
                                     "train/step": epoch * len(train_dataloader) + step,
                                     "train/loss": loss_value,
-                                    "train/original_grad_norm": grad_norm,
+                                    "train/grad_norm": grad_norm,
                                 }
                             )
 
