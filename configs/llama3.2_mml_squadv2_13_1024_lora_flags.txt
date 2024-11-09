@@ -14,7 +14,7 @@
 --sharding_strategy=FULL_SHARD
 --use_profiler=false
 --max_train_step=0
---max_eval_step=1
+--max_eval_step=0
 --num_epochs=2
 --steps_before_evaluation=32
 --gradient_accumulation_steps=8
