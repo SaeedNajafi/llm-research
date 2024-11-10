@@ -22,7 +22,7 @@
 --gradient_clipping_threshold=1.0
 --run_validation
 --checkpoint_on_metric=squadv2_metrics_f1
---model_path=/model-weights/Llama-3.2-1B-Instruct
+--model_path=/scratch/ssd004/scratch/snajafi/model-weights
 --llm_name=llama3.2
 --t_0=3
 --test_top_p=0.9
