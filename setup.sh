@@ -14,10 +14,7 @@ eval "$(conda shell.bash hook)"
 conda activate ${ENV_NAME}
 
 echo "Installing cxx-compiler and gxx and gcc."
-conda install -c conda-forge cxx-compiler -y
-conda install -c conda-forge gxx==12.2 -y
-conda install -c conda-forge gcc==12.2 -y
-conda install -c conda-forge level-zero -y
+conda install -c conda-forge cxx-compiler gxx==12.2 gcc==12.2 level-zero -y
 conda install libevent -y
 
 # echo "Installing git."
@@ -30,9 +27,7 @@ conda install -c conda-forge git-lfs -y
 conda install -c conda-forge rust -y
 
 echo "Installing cuda drivers."
-conda install -c nvidia/label/cuda-12.1.1 cuda -y
-conda install -c nvidia/label/cuda-12.1.1 cuda-nvcc -y
-conda install -c nvidia/label/cuda-12.1.1 cuda-toolkit -y
+conda install -c nvidia/label/cuda-12.1.1 cuda cuda-nvcc cuda-toolkit -y
 conda install -c conda-forge cudnn -y
 
 echo "Upgrade pip."
@@ -40,8 +35,8 @@ pip3 install --upgrade pip
 
 echo "Install torch."
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
-# pip3 install tensorflow tensorflow-hub
+
+# pip3 install -r requirements.txt
 
 echo "Install the editable version of llm-research."
 pip3 install -e .[dev]

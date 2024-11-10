@@ -31,7 +31,7 @@ INSTALL_REQUIRES = [
     "packaging",
     "wheel",
     "setuptools",
-    "tensorrt",
+    # "tensorrt",
     "triton",
 ]
 
