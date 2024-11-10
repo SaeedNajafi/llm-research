@@ -46,8 +46,7 @@ export NCCL_HOME=$CONDA_PREFIX
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib
 
 # echo "Install flash-attention and vllm-flash-attn"
-
-# pip3 install --no-cache-dir flash-attn --no-build-isolation
+pip3 install --no-cache-dir flash-attn --no-build-isolation
 
 # pip3 install vllm ray llvmlite vllm-flash-attn
 

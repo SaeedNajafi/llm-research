@@ -9,7 +9,6 @@ import os
 import time
 from typing import Any, Callable, Dict, Iterator, List, Tuple, Union
 
-import numpy as np
 import torch
 import torch.distributed as dist
 from absl import flags, logging
@@ -101,6 +100,7 @@ def train(
     checkpoint_times: List[float] = []
     results: Dict[str, Union[float, str]] = {}
     total_train_steps = 0
+    grad_norm = 0.0
     max_steps_reached = False  # Flag to indicate max training steps reached
     best_val_score = -float("inf")
 
@@ -146,14 +146,13 @@ def train(
 
                         # regular backpropagation when fp16 is not used
                         loss.backward()
-                        grad_norm = np.sqrt(sum([torch.norm(p.grad) ** 2 for p in model.model.parameters()]))
-                        msg = f"grad norm: {grad_norm}"
-                        logging.info(msg)
                         if FLAGS.gradient_clipping and FLAGS.gradient_clipping_threshold > 0.0:
                             if model.distributed_strategy == "fsdp":
-                                model.model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
+                                grad_norm = model.model.clip_grad_norm_(FLAGS.gradient_clipping_threshold)
                             elif model.distributed_strategy == "ddp":
-                                torch.nn.utils.clip_grad_norm_(model.model.parameters(), FLAGS.gradient_clipping_threshold)
+                                grad_norm = torch.nn.utils.clip_grad_norm_(
+                                    model.model.parameters(), FLAGS.gradient_clipping_threshold
+                                )
                         model.optimizer.step()
                         model.optimizer.zero_grad()
                         pbar.update(1)
@@ -170,9 +169,6 @@ def train(
                             total_loss += loss_value
                             # regular backpropagation when fp16 is not used
                             loss.backward()
-                            grad_norm = np.sqrt(sum([torch.norm(p.grad) ** 2 for p in model.model.parameters()]))
-                            msg = f"grad norm: {grad_norm}"
-                            logging.info(msg)
 
                     if FLAGS.use_profiler:
                         profile_context.step()
@@ -184,6 +180,7 @@ def train(
                                     "train/epoch": epoch + 1,
                                     "train/step": epoch * len(train_dataloader) + step,
                                     "train/loss": loss_value,
+                                    "train/grad_norm": grad_norm,
                                 }
                             )
 
