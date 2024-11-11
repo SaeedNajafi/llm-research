@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
 from src.utils.general_utils import DictDataset
-from src.utils.rl_utils import compute_entropy_loss, form_returns
+from src.utils.rl_utils import compute_entropy_loss, form_returns, normalize_signals
 
 FLAGS = flags.FLAGS
 
@@ -160,127 +160,143 @@ class LossCalculator:
 
         return return_data
 
-    # def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = True) -> torch.Tensor:
-    #     """Use reinforce with per-step rewards to compute the loss."""
-    #     sample_data = self.sample_and_generate_details(batch)
-    #     batch_size = len(batch["gold_answers"])
-    #     # These are full sequence returns.
-    #     # Compute the rewards.
-    #     gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
-    #     per_step_rewards = self.reward_calculator.compute_per_step_rewards(
-    #         gold_answers,
-    #         sample_data["partial_samples"],
-    #         output_template=self.policy_lm.output_template,
-    #         terminal_reward_only=terminal_reward_only,
-    #     )
-    #     if FLAGS.include_policy_ref_kl:
-    #         # Compute log likelihood of the reference model for the samples.
-    #         cleaned_samples = []
-    #         for per_example_samples in sample_data["partial_samples"]:
-    #             per_example_cleaned_samples = []
-    #             for sample_sequence in per_example_samples:
-    #                 # Last complete one!
-    #                 sample_output = sample_sequence[-1]
-    #                 per_example_cleaned_samples.append(sample_output)
-    #             cleaned_samples.append(per_example_cleaned_samples)
+    def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = True) -> torch.Tensor:
+        """Use reinforce with per-step or terminal rewards to compute the loss.
 
-    #         num_samples_per_example = FLAGS.rl_sample_size
-    #         input_texts = batch["texts"]
-    #         row_ids = batch["row_ids"]
-    #         expanded_input_texts = list(chain.from_iterable([[text] * num_samples_per_example for text in input_texts]))
-    #         expanded_row_ids = list(chain.from_iterable([[row_id] * num_samples_per_example for row_id in row_ids]))
-    #         flattened_sample_outputs = list(chain.from_iterable(cleaned_samples))
-    #         data = self.ref_policy_lm.prepare_text_for_train(
-    #             texts=expanded_input_texts, output_texts=flattened_sample_outputs, row_ids=expanded_row_ids
-    #         )
-    #         dataset = DictDataset(data)
-    #         dataloader = DataLoader(
-    #             dataset,
-    #             shuffle=False,
-    #             batch_size=len(dataset),
-    #             num_workers=1,
-    #         )
-    #         for ref_batch in dataloader:
-    #             _, ref_token_log_probs, _, _ = self.ref_policy_lm.train(ref_batch, per_step_scores=True, to_train=False)
+        Also include the option of different normalizations, adding
+        entropy regularization, or KL penalty with respect to reference
+        model.
+        """
+        sample_data = self.sample_and_generate_details(batch)
+        batch_size = len(batch["gold_answers"])
+        # These are full sequence returns.
+        # Compute the rewards.
+        gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
+        per_step_rewards = self.reward_calculator.compute_per_step_rewards(
+            gold_answers,
+            sample_data["partial_samples"],
+            output_template=self.policy_lm.output_template,
+            templated_rewards=True,
+            terminal_reward_only=terminal_reward_only,
+        )
+        # if FLAGS.include_policy_ref_kl:
+        #     # Compute log likelihood of the reference model for the samples.
+        #     cleaned_samples = []
+        #     for per_example_samples in sample_data["partial_samples"]:
+        #         per_example_cleaned_samples = []
+        #         for sample_sequence in per_example_samples:
+        #             # Last complete one!
+        #             sample_output = sample_sequence[-1]
+        #             per_example_cleaned_samples.append(sample_output)
+        #         cleaned_samples.append(per_example_cleaned_samples)
 
-    #         # the sequence length in the token_log_probs has been shifted to the right by 1 position.
-    #         ref_token_log_probs = ref_token_log_probs.view(batch_size, FLAGS.rl_sample_size, -1)
-    #         ref_token_log_probs_arr = []
-    #         for b_idx in range(batch_size):
-    #             ref_token_log_probs_arr_per_example = []
-    #             for s_idx in range(FLAGS.rl_sample_size):
-    #                 ref_token_log_probs_arr_per_example_per_sample = []
-    #                 ref_token_log_prob_sequence = ref_token_log_probs[b_idx, s_idx, :]
-    #                 for ref_token_log_prob in ref_token_log_prob_sequence:
-    #                     if ref_token_log_prob.item() != 0.0:
-    #                         ref_token_log_probs_arr_per_example_per_sample.append(ref_token_log_prob.item())
-    #                 ref_token_log_probs_arr_per_example.append(ref_token_log_probs_arr_per_example_per_sample)
-    #             ref_token_log_probs_arr.append(ref_token_log_probs_arr_per_example)
+        #     num_samples_per_example = FLAGS.rl_sample_size
+        #     input_texts = batch["texts"]
+        #     row_ids = batch["row_ids"]
+        #     expanded_input_texts = list(chain.from_iterable([[text] * num_samples_per_example for text in input_texts]))
+        #     expanded_row_ids = list(chain.from_iterable([[row_id] * num_samples_per_example for row_id in row_ids]))
+        #     flattened_sample_outputs = list(chain.from_iterable(cleaned_samples))
+        #     data = self.ref_policy_lm.prepare_text_for_train(
+        #         texts=expanded_input_texts, output_texts=flattened_sample_outputs, row_ids=expanded_row_ids
+        #     )
+        #     dataset = DictDataset(data)
+        #     dataloader = DataLoader(
+        #         dataset,
+        #         shuffle=False,
+        #         batch_size=len(dataset),
+        #         num_workers=1,
+        #     )
+        #     for ref_batch in dataloader:
+        #         _, ref_token_log_probs, _, _ = self.ref_policy_lm.train(ref_batch, per_step_scores=True, to_train=False)
 
-    #         # normalize the ref log probs.
-    #         normalized_ref_token_log_probs_arr = self.normalize_signals(signals=ref_token_log_probs_arr)
-    #         # add ref_log_prob as a new reward.
-    #         for b_idx in range(batch_size):
-    #             for s_idx in range(FLAGS.rl_sample_size):
-    #                 sequence_rewards = normalized_per_step_rewards[b_idx][s_idx]
-    #                 ref_kl_sequence_rewards = normalized_ref_token_log_probs_arr[b_idx][s_idx]
-    #                 try:
-    #                     for seq_idx in range(len(sequence_rewards)):
-    #                         normalized_per_step_rewards[b_idx][s_idx][seq_idx] += (
-    #                             FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
-    #                         )
-    #                 except Exception:
-    #                     print("saeed")
-    #                     print(len(sequence_rewards))
-    #                     print(len(ref_kl_sequence_rewards))
-    #                     print(len(ref_token_log_probs_arr[b_idx][s_idx]))
-    #                     print(ref_token_log_probs.size())
-    #                     print(sample_data["actual_lens"])
-    #                     exit()
+        #     # the sequence length in the token_log_probs has been shifted to the right by 1 position.
+        #     ref_token_log_probs = ref_token_log_probs.view(batch_size, FLAGS.rl_sample_size, -1)
+        #     ref_token_log_probs_arr = []
+        #     for b_idx in range(batch_size):
+        #         ref_token_log_probs_arr_per_example = []
+        #         for s_idx in range(FLAGS.rl_sample_size):
+        #             ref_token_log_probs_arr_per_example_per_sample = []
+        #             ref_token_log_prob_sequence = ref_token_log_probs[b_idx, s_idx, :]
+        #             for ref_token_log_prob in ref_token_log_prob_sequence:
+        #                 if ref_token_log_prob.item() != 0.0:
+        #                     ref_token_log_probs_arr_per_example_per_sample.append(ref_token_log_prob.item())
+        #             ref_token_log_probs_arr_per_example.append(ref_token_log_probs_arr_per_example_per_sample)
+        #         ref_token_log_probs_arr.append(ref_token_log_probs_arr_per_example)
 
-    #     returns = form_returns(per_step_rewards)
-    #     normalized_returns = self.normalize_signals(
-    #         returns, normalization_type=FLAGS.reward_normalization_type, terminal_reward_only=terminal_reward_only
-    #     )
-    #     objective = 0.0
-    #     if FLAGS.with_baseline:
-    #         current_batch_sample_average_rewards = 0.0
-    #     for b_idx in range(batch_size):
-    #         for sample_idx in range(FLAGS.rl_sample_size):
-    #             sequence_token_log_ps = sample_data["token_log_ps"][b_idx][sample_idx]
-    #             sequence_returns = normalized_returns[b_idx][sample_idx]
-    #             if FLAGS.with_baseline:
-    #                 current_batch_sample_average_rewards += torch.mean(sequence_returns, dim=0)
-    #                 sequence_returns = sequence_returns - self.baseline_reward
-    #             objective += torch.sum(sequence_token_log_ps * sequence_returns)
+        #     # normalize the ref log probs.
+        #     normalized_ref_token_log_probs_arr = self.normalize_signals(signals=ref_token_log_probs_arr)
+        #     # add ref_log_prob as a new reward.
+        #     for b_idx in range(batch_size):
+        #         for s_idx in range(FLAGS.rl_sample_size):
+        #             sequence_rewards = normalized_per_step_rewards[b_idx][s_idx]
+        #             ref_kl_sequence_rewards = normalized_ref_token_log_probs_arr[b_idx][s_idx]
+        #             try:
+        #                 for seq_idx in range(len(sequence_rewards)):
+        #                     normalized_per_step_rewards[b_idx][s_idx][seq_idx] += (
+        #                         FLAGS.policy_ref_kl_coef * ref_kl_sequence_rewards[seq_idx]
+        #                     )
+        #             except Exception:
+        #                 print("saeed")
+        #                 print(len(sequence_rewards))
+        #                 print(len(ref_kl_sequence_rewards))
+        #                 print(len(ref_token_log_probs_arr[b_idx][s_idx]))
+        #                 print(ref_token_log_probs.size())
+        #                 print(sample_data["actual_lens"])
+        #                 exit()
 
-    #     if FLAGS.with_baseline:
-    #         new_baseline_reward = (current_batch_sample_average_rewards / FLAGS.rl_sample_size) / batch_size
-    #         self.baseline_reward = (
-    #             FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
-    #         )
-    #         msg = f"\nbaseline reward used: {self.baseline_reward}"
-    #         logging.info(msg)
+        returns = [form_returns(per_batch_rewards) for per_batch_rewards in per_step_rewards]
 
-    #     loss = -(objective / FLAGS.rl_sample_size) / batch_size
+        flattened_returns = []
+        for return_per_batch in returns:
+            for return_per_batch_per_sample in return_per_batch:
+                flattened_returns.append(return_per_batch_per_sample)
 
-    #     # Compute the per-step entropy if requested.
-    #     if FLAGS.compute_per_step_entropy:
-    #         entropy_loss = compute_entropy_loss(
-    #             sample_data["labels_to_consider"],
-    #             sample_data["actual_lens"],
-    #             sample_data["token_log_ps"],
-    #             sample_data["logits"],
-    #         )
-    #         msg = f"\nentropy loss computed: {entropy_loss}"
-    #         logging.info(msg)
-    #         coefficient = FLAGS.entropy_coef
-    #         if FLAGS.include_policy_ref_kl:
-    #             # necessary to train with kl penalty between ref and policy.
-    #             coefficient += FLAGS.policy_ref_kl_coef
-    #         loss += coefficient * entropy_loss
+        normalized_flattened_returns = normalize_signals(
+            flattened_returns, normalization_type=FLAGS.reward_normalization_type, terminal_reward_only=terminal_reward_only
+        )
+        objective = 0.0
+        if FLAGS.with_baseline:
+            current_batch_sample_average_rewards = 0.0
+        for b_idx in range(batch_size):
+            for sample_idx in range(FLAGS.rl_sample_size):
+                sequence_token_log_ps = sample_data["token_log_ps"][b_idx][sample_idx]
+                sequence_returns = normalized_flattened_returns[(b_idx * FLAGS.rl_sample_size) + sample_idx]
+                if FLAGS.with_baseline:
+                    current_batch_sample_average_rewards += torch.mean(sequence_returns, dim=0)
+                    sequence_returns = sequence_returns - self.baseline_reward
+                objective += torch.sum(sequence_token_log_ps * sequence_returns)
 
-    #     return loss
+        if FLAGS.with_baseline:
+            new_baseline_reward = (current_batch_sample_average_rewards / FLAGS.rl_sample_size) / batch_size
+            self.baseline_reward = (
+                FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
+            )
+            msg = f"\nbaseline reward used: {self.baseline_reward}"
+            logging.info(msg)
+
+        loss = -(objective / FLAGS.rl_sample_size) / batch_size
+
+        # Compute the per-step entropy if requested.
+        if FLAGS.compute_per_step_entropy:
+            entropy_losses = [
+                compute_entropy_loss(
+                    sample_data["labels_to_consider"][b_idx],
+                    sample_data["actual_lens"][b_idx, :],
+                    sample_data["token_log_ps"][b_idx],
+                    sample_data["logits"][b_idx],
+                )
+                for b_idx in range(batch_size)
+            ]
+            entropy_loss = sum(entropy_losses) / len(entropy_losses)
+            msg = f"\nentropy loss computed: {entropy_loss}"
+            logging.info(msg)
+            coefficient = FLAGS.entropy_coef
+            if FLAGS.include_policy_ref_kl:
+                # necessary to train with kl penalty between ref and policy.
+                coefficient += FLAGS.policy_ref_kl_coef
+            loss += coefficient * entropy_loss
+
+        return loss
 
     def maximum_marginal_likelihood_loss(
         self,
@@ -394,8 +410,8 @@ class LossCalculator:
         elif self.objective_type == "iterative_finetuning":
             return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
 
-        # elif self.objective_type == "reinforce_terminal_reward":
-        #     return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward_only=True)
+        elif self.objective_type == "reinforce_terminal_reward":
+            return self.reinforce_loss(batch, terminal_reward_only=True)
 
         # elif self.objective_type == "reinforce":
         #     return self.reinforce_loss(batch)
