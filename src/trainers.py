@@ -332,13 +332,11 @@ class LossCalculator:
         sample_scores = self.reward_calculator.compute_per_step_rewards(
             gold_answers, partial_outputs=samples, terminal_reward_only=True
         )
-        print(sample_scores)
         returns = torch.tensor(sample_scores, dtype=torch.float64, device=self.policy_lm.device)
         returns = returns.view(batch_size, FLAGS.rl_sample_size)
         returns_min = returns.min()
         returns_max = returns.max()
         normalized_returns = (returns - returns_min) / (returns_max - returns_min + 1e-12)
-        print(normalized_returns)
         if not iterative_finetuning:
             # These are full sequence returns.
             # This is the MML objective.

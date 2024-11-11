@@ -51,14 +51,16 @@ def main(argv: Any) -> None:
     local_rank = int(os.environ["LOCAL_RANK"])
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
+    local_world_size = int(os.environ["NPROC_PER_NODE"])
 
     if torch.distributed.is_initialized():
         if not torch.cuda.is_available():
             raise Exception("We need cuda to run the code.")
         num_gpus = torch.cuda.device_count()
-        print("This is the number of gpus:", num_gpus)
+        num_gpus_per_local_rank = num_gpus // local_world_size
+        print("This is the number of gpus for each rank:", num_gpus_per_local_rank)
         print("This is the local rank:", local_rank)
-        gpu_ids = [num_gpus * local_rank + gpu_idx for gpu_idx in range(num_gpus)]
+        gpu_ids = [num_gpus_per_local_rank * local_rank + gpu_idx for gpu_idx in range(num_gpus_per_local_rank)]
         clear_gpu_cache()
         setup_environ_flags(rank)
 
