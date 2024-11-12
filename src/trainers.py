@@ -58,7 +58,9 @@ class LossCalculator:
         self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
 
     def teacher_forcing_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
-        return self.policy_lm.train(batch)
+        log_likelihood = self.policy_lm.train(batch)
+        loss = -torch.mean(log_likelihood, dim=0)
+        return loss
 
     def sample_and_generate_details(
         self, batch: torch.utils.data.Dataset, teacher_forcing_labels: Optional[torch.Tensor] = None, to_train: bool = True
@@ -160,7 +162,7 @@ class LossCalculator:
 
         return return_data
 
-    def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = True) -> torch.Tensor:
+    def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = False) -> torch.Tensor:
         """Use reinforce with per-step or terminal rewards to compute the loss.
 
         Also include the option of different normalizations, adding
@@ -244,23 +246,25 @@ class LossCalculator:
         #                 print(sample_data["actual_lens"])
         #                 exit()
 
-        returns = [form_returns(per_batch_rewards) for per_batch_rewards in per_step_rewards]
+        flattened_rewards = []
+        for rewards_per_batch in per_step_rewards:
+            for rewards_per_batch_per_sample in rewards_per_batch:
+                flattened_rewards.append(rewards_per_batch_per_sample)
 
-        flattened_returns = []
-        for return_per_batch in returns:
-            for return_per_batch_per_sample in return_per_batch:
-                flattened_returns.append(return_per_batch_per_sample)
-
-        normalized_flattened_returns = normalize_signals(
-            flattened_returns, normalization_type=FLAGS.reward_normalization_type, terminal_reward_only=terminal_reward_only
+        normalized_flattened_rewards = normalize_signals(
+            flattened_rewards, normalization_type=FLAGS.reward_normalization_type, terminal_reward_only=terminal_reward_only
         )
+
+        returns = form_returns(normalized_flattened_rewards)
+
         objective = 0.0
         if FLAGS.with_baseline:
             current_batch_sample_average_rewards = 0.0
         for b_idx in range(batch_size):
             for sample_idx in range(FLAGS.rl_sample_size):
                 sequence_token_log_ps = sample_data["token_log_ps"][b_idx][sample_idx]
-                sequence_returns = normalized_flattened_returns[(b_idx * FLAGS.rl_sample_size) + sample_idx]
+                sequence_returns = returns[(b_idx * FLAGS.rl_sample_size) + sample_idx]
+                sequence_returns = torch.tensor(sequence_returns, dtype=torch.float64, device=self.policy_lm.device)
                 if FLAGS.with_baseline:
                     current_batch_sample_average_rewards += torch.mean(sequence_returns, dim=0)
                     sequence_returns = sequence_returns - self.baseline_reward
@@ -413,8 +417,8 @@ class LossCalculator:
         elif self.objective_type == "reinforce_terminal_reward":
             return self.reinforce_loss(batch, terminal_reward_only=True)
 
-        # elif self.objective_type == "reinforce":
-        #     return self.reinforce_loss(batch)
+        elif self.objective_type == "reinforce":
+            return self.reinforce_loss(batch, terminal_reward_only=False)
 
         # elif self.objective_type == "teacher_forcing_reinforce":
         #     return self.reinforce_loss(batch) + self.teacher_forcing_loss(batch)

@@ -137,7 +137,6 @@ def train(
                         # next forward / backward pass will be synced
                         dist.barrier()
                         loss = loss_calculator.train(batch)
-                        loss = -torch.mean(loss, dim=0)
                         loss = loss / FLAGS.gradient_accumulation_steps
                         loss_value = loss.detach().float()
                         train_step_loss.append(loss_value.item())
@@ -161,7 +160,6 @@ def train(
                         # no need to sync while accumulating gradients
                         with model.model.no_sync():
                             loss = loss_calculator.train(batch)
-                            loss = -torch.mean(loss, dim=0)
                             loss = loss / FLAGS.gradient_accumulation_steps
                             loss_value = loss.detach().float()
                             train_step_loss.append(loss_value.item())

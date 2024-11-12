@@ -1,7 +1,7 @@
---dev_file=/fs01/home/snajafi/llm-research/data/1024-shot-datasets/squad/1024-13-dev.tsv
---train_file=/fs01/home/snajafi/llm-research/data/1024-shot-datasets/squad/1024-13-train.tsv
---checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl_experiments_llama3.2_1b_november_7/squadv2_1024_13/hard_em
---prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl_experiments_llama3.2_1b_november_7/squadv2_1024_13/hard_em/internal_validation_prediction_squadv2.csv
+--dev_file=/home/saeednjf/llm-research/data/1024-shot-datasets/squad/1024-13-dev.tsv
+--train_file=/home/saeednjf/llm-research/data/1024-shot-datasets/squad/1024-13-train.tsv
+--checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/hard_em
+--prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/hard_em/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -24,7 +24,7 @@
 --metric_type=squadv2_metrics_f1
 --checkpoint_on_metric=squadv2_metrics_f1
 --base_llm_id=Llama-3.2-1B-Instruct
---weights_base_folder=/model-weights
+--weights_base_folder=/home/saeednjf/nearline/rrg-afyshe/pre-trained-models
 --llm_name=llama3.2
 --t_0=2
 --test_top_p=0.9
