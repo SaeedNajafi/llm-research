@@ -39,7 +39,7 @@ def compute_entropy_loss(
     return loss
 
 
-def form_returns(rewards: List[torch.Tensor]) -> List[torch.Tensor]:
+def form_returns(rewards: List[torch.Tensor]) -> List[List[float]]:
     """Compute returns based on any rewards."""
     returns = []
     for batch_idx in range(len(rewards)):

@@ -52,8 +52,9 @@ class LossCalculator:
         if ref_policy_lm is not None:
             self.ref_policy_lm = ref_policy_lm
         if FLAGS.with_baseline:
-            # For simple, average return baseline.
-            self.baseline_reward = 0.0
+            # For simple, time-step based average return.
+            self.baseline_returns = {idx: 0.0 for idx in range(FLAGS.output_max_length)}
+
         self.objective_type = objective_type
         self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
 
@@ -256,25 +257,31 @@ class LossCalculator:
         )
 
         returns = form_returns(normalized_flattened_rewards)
+        
+        # normalized_returns = normalize_signals(
+        #    returns, normalization_type=FLAGS.reward_normalization_type, terminal_reward_only=False
+        # )
 
         objective = 0.0
         if FLAGS.with_baseline:
-            current_batch_sample_average_rewards = 0.0
+            current_batch_sample_average_returns = {idx: 0.0 for idx in range(FLAGS.output_max_length)}
+            current_batch_sample_average_returns_counter = {idx: 0.0 for idx in range(FLAGS.output_max_length)}
         for b_idx in range(batch_size):
             for sample_idx in range(FLAGS.rl_sample_size):
                 sequence_token_log_ps = sample_data["token_log_ps"][b_idx][sample_idx]
                 sequence_returns = returns[(b_idx * FLAGS.rl_sample_size) + sample_idx]
                 sequence_returns = torch.tensor(sequence_returns, dtype=torch.float64, device=self.policy_lm.device)
                 if FLAGS.with_baseline:
-                    current_batch_sample_average_rewards += torch.mean(sequence_returns, dim=0)
-                    sequence_returns = sequence_returns - self.baseline_reward
+                    for idx in range(sequence_returns.size()[0]):
+                        current_batch_sample_average_returns[idx] += sequence_returns[idx]
+                        current_batch_sample_average_returns_counter[idx] += 1
+                        sequence_returns[idx] = sequence_returns[idx] - self.baseline_returns[idx]
                 objective += torch.sum(sequence_token_log_ps * sequence_returns)
 
         if FLAGS.with_baseline:
-            new_baseline_reward = (current_batch_sample_average_rewards / FLAGS.rl_sample_size) / batch_size
-            self.baseline_reward = (
-                FLAGS.baseline_momentum * self.baseline_reward + (1.0 - FLAGS.baseline_momentum) * new_baseline_reward
-            )
+            new_baseline_returns = {idx: (v / (FLAGS.rl_sample_size * batch_size * current_batch_sample_average_returns_counter[idx])) for idx, v in current_batch_sample_average_returns.items()}
+            self.baseline_returns = {idx: FLAGS.baseline_momentum * v + (1.0 - FLAGS.baseline_momentum) * new_baseline_returns[idx] for idx, v in self.baseline_returns.items()}
+            
             msg = f"\nbaseline reward used: {self.baseline_reward}"
             logging.info(msg)
 

@@ -43,11 +43,11 @@
 --train_batch_size=1
 --eval_batch_size=4
 --ddp
---objective_type=reinforce_terminal_reward
+--objective_type=reinforce
 --rl_sample_size=10
 --iterative_chunk_size=1
 --reward_normalization_type=linear
---compute_per_step_entropy=false
+--compute_per_step_entropy
 --entropy_coef=0.1
 --with_baseline=false
 --baseline_momentum=0.9
