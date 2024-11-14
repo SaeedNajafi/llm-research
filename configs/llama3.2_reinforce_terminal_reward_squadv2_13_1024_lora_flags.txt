@@ -44,8 +44,8 @@
 --eval_batch_size=4
 --ddp
 --objective_type=reinforce
---rl_sample_size=10
---iterative_chunk_size=1
+--rl_sample_size=8
+--iterative_chunk_size=2
 --reward_normalization_type=linear
 --compute_per_step_entropy
 --entropy_coef=0.1

@@ -395,6 +395,9 @@ class RewardCalculator:
                     else:
                         templated_references = references
                     partial_predictions = partial_outputs[batch_idx][sample_idx]
+                    if terminal_reward_only:
+                        # only consider the last complete element.
+                        partial_predictions = [partial_predictions[-1]]
                     sequence_rewards = []
                     if self.qa_metric_model is None:
                         for prediction in partial_predictions:
@@ -438,12 +441,6 @@ class RewardCalculator:
                             temp = sequence_rewards[seq_idx]
                             sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
                             prev_seq_reward = temp
-
-                    else:
-                        # only give terminal rewards.
-                        zeros = [0.0] * len(sequence_rewards)
-                        zeros[-1] = sequence_rewards[-1]
-                        sequence_rewards = zeros
 
                     per_example_rewards.append(sequence_rewards)
                 rewards.append(per_example_rewards)
