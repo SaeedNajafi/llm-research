@@ -117,7 +117,7 @@ class LossCalculator:
             logits.append(logits_per_call.view(batch_size, FLAGS.iterative_chunk_size, seq_len, vocab_size))
             partial_generations.append(batch_partial_generations_per_call)
         sequence_log_probs = torch.cat(final_log_ps, dim=1)
-        actual_lens = torch.cat(actual_lens, dim=1)
+        actual_lens_tensor = torch.cat(actual_lens, dim=1)
         batch_size = sequence_log_probs.size()[0]
         final_labels_to_consider = []
         token_log_ps = []
@@ -140,9 +140,7 @@ class LossCalculator:
             final_logits.append(logits_arr)
             partial_samples.append(partial_samples_arr)
 
-        
-
-        max_len = actual_lens.max()
+        max_len = actual_lens_tensor.max()
         # Pad sequences up until max_len
         logits_flattened = []
         token_log_ps_flattened = []
@@ -152,44 +150,41 @@ class LossCalculator:
                 # pad labels to consider
                 cur_labels_tensor = final_labels_to_consider[b_idx][sample_idx]
                 cur_len = cur_labels_tensor.size()[0]
-                pad_label_tensor = torch.tensor([-100] * (max_len - cur_len),
-                                                dtype=cur_labels_tensor.dtype,
-                                                device=cur_labels_tensor.device)
+                pad_label_tensor = torch.tensor(
+                    [-100] * (max_len - cur_len), dtype=cur_labels_tensor.dtype, device=cur_labels_tensor.device
+                )
                 flattened_labels_to_consider.append(torch.cat((cur_labels_tensor, pad_label_tensor), dim=0))
-                
+
                 # Pad samples with the last one, corresponding to padding the generated ids with the pad token.
                 last_partial_sample = partial_samples[b_idx][sample_idx][-1]
                 partial_samples[b_idx][sample_idx].extend([last_partial_sample] * (max_len - cur_len))
 
                 # pad token log_ps
                 cur_token_log_ps_tensor = token_log_ps[b_idx][sample_idx]
-                pad_token_log_ps_tensor = torch.tensor([0.0] * (max_len - cur_len),
-                                                dtype=cur_token_log_ps_tensor.dtype,
-                                                device=cur_token_log_ps_tensor.device)
+                pad_token_log_ps_tensor = torch.tensor(
+                    [0.0] * (max_len - cur_len), dtype=cur_token_log_ps_tensor.dtype, device=cur_token_log_ps_tensor.device
+                )
                 token_log_ps_flattened.append(torch.cat((cur_token_log_ps_tensor, pad_token_log_ps_tensor), dim=0))
-                
+
                 # pad logits
                 cur_logits = final_logits[b_idx][sample_idx]
                 cur_len, vocab_size = cur_logits.size()
-                pad_logits = torch.zeros((max_len - cur_len, vocab_size),
-                                         dtype=cur_logits.dtype,
-                                         device=cur_logits.device)
+                pad_logits = torch.zeros((max_len - cur_len, vocab_size), dtype=cur_logits.dtype, device=cur_logits.device)
                 logits_flattened.append(torch.cat((cur_logits, pad_logits), dim=0))
-        
+
         final_logits = torch.stack(logits_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1, vocab_size)
         final_token_log_ps = torch.stack(token_log_ps_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
         final_labels_to_consider = torch.stack(flattened_labels_to_consider, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
-        
+
         return_data = {
             "sequence_log_probs": sequence_log_probs,
-            "actual_lens": actual_lens,
+            "actual_lens": actual_lens_tensor,
             "partial_samples": partial_samples,
             "labels_to_consider": final_labels_to_consider,
             "token_log_ps": final_token_log_ps,
             "logits": final_logits,
-        }         
-        
-        
+        }
+
         # We should add a padding code to here!
         return return_data
 
@@ -277,9 +272,7 @@ class LossCalculator:
         #                 print(sample_data["actual_lens"])
         #                 exit()
 
-        normalized_rewards = normalize_signals(
-            per_step_rewards, normalization_type=FLAGS.reward_normalization_type
-        )
+        normalized_rewards = normalize_signals(per_step_rewards, normalization_type=FLAGS.reward_normalization_type)
         returns = form_returns(normalized_rewards)
 
         # normalized_returns = normalize_signals(
@@ -292,8 +285,12 @@ class LossCalculator:
         else:
             objective = 0.0
             if FLAGS.with_baseline:
-                current_batch_sample_average_returns = {idx: 0.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)}
-                current_batch_sample_average_returns_counter = {idx: 1.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)}
+                current_batch_sample_average_returns = {
+                    idx: 0.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)
+                }
+                current_batch_sample_average_returns_counter = {
+                    idx: 1.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)
+                }
 
             for b_idx in range(batch_size):
                 for sample_idx in range(FLAGS.rl_sample_size):
@@ -309,7 +306,9 @@ class LossCalculator:
 
             if FLAGS.with_baseline:
                 for idx, v in current_batch_sample_average_returns.items():
-                    current_batch_sample_average_returns[idx] = v / (FLAGS.rl_sample_size * batch_size * current_batch_sample_average_returns_counter[idx])
+                    current_batch_sample_average_returns[idx] = v / (
+                        FLAGS.rl_sample_size * batch_size * current_batch_sample_average_returns_counter[idx]
+                    )
                 for idx, v in self.baseline_returns.items():
                     alpha = FLAGS.baseline_momentum
                     self.baseline_returns[idx] = alpha * v + (1.0 - alpha) * current_batch_sample_average_returns[idx]
@@ -322,10 +321,10 @@ class LossCalculator:
         # Compute the per-step entropy if requested.
         if FLAGS.compute_per_step_entropy:
             entropy_loss = compute_entropy_loss(
-                    sample_data["labels_to_consider"],
-                    sample_data["actual_lens"],
-                    sample_data["token_log_ps"],
-                    sample_data["logits"],
+                sample_data["labels_to_consider"],
+                sample_data["actual_lens"],
+                sample_data["token_log_ps"],
+                sample_data["logits"],
             )
             msg = f"\nentropy loss computed: {entropy_loss}"
             logging.info(msg)
@@ -387,11 +386,11 @@ class LossCalculator:
         sample_scores = self.reward_calculator.compute_per_step_rewards(
             gold_answers, partial_outputs=samples, terminal_reward_only=True
         )
-        sample_scores = torch.tensor(sample_scores, dtype=torch.float64, device=self.policy_lm.device)
-        sample_scores = sample_scores.view(batch_size, FLAGS.rl_sample_size)
-        
+        sample_scores_tensor = torch.tensor(sample_scores, dtype=torch.float64, device=self.policy_lm.device)
+        sample_scores_tensor = sample_scores_tensor.view(batch_size, FLAGS.rl_sample_size)
+
         # Making sure to be between zero and one.
-        normalized_scores = normalize_signals(sample_scores, normalization_type="linear")
+        normalized_scores = normalize_signals(sample_scores_tensor, normalization_type="linear")
         if not iterative_finetuning:
             # These are full sequence returns.
             # This is the MML objective.

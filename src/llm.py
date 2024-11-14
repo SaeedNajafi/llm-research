@@ -315,25 +315,6 @@ class LLM(torch.nn.Module):
                 #    self.model.forward(input_ids=input_ids)
                 with FSDP.summon_full_params(self.model, writeback=False, recurse=False):
                     results = self.model.generate(
-                            input_ids=input_ids,
-                            attention_mask=attention_mask,
-                            do_sample=True,
-                            top_p=top_p,
-                            temperature=temperature,
-                            max_length=FLAGS.input_max_length + FLAGS.output_max_length,
-                            num_return_sequences=num_return_sequences,
-                            output_logits=True,
-                            return_dict_in_generate=True,
-                            return_legacy_cache=use_cache,
-                            use_cache=use_cache,
-                            renormalize_logits=True,
-                            eos_token_id=self.terminators,
-                            pad_token_id=self.tokenizer.pad_token_id,
-                            iterative_rl_sampling=iterative_rl_sampling,
-                            teacher_forcing_labels=teacher_forcing_labels,
-                        )
-            elif self.distributed_strategy == "ddp":
-                results = self.model.module.generate(
                         input_ids=input_ids,
                         attention_mask=attention_mask,
                         do_sample=True,
@@ -351,6 +332,25 @@ class LLM(torch.nn.Module):
                         iterative_rl_sampling=iterative_rl_sampling,
                         teacher_forcing_labels=teacher_forcing_labels,
                     )
+            elif self.distributed_strategy == "ddp":
+                results = self.model.module.generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    do_sample=True,
+                    top_p=top_p,
+                    temperature=temperature,
+                    max_length=FLAGS.input_max_length + FLAGS.output_max_length,
+                    num_return_sequences=num_return_sequences,
+                    output_logits=True,
+                    return_dict_in_generate=True,
+                    return_legacy_cache=use_cache,
+                    use_cache=use_cache,
+                    renormalize_logits=True,
+                    eos_token_id=self.terminators,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    iterative_rl_sampling=iterative_rl_sampling,
+                    teacher_forcing_labels=teacher_forcing_labels,
+                )
 
             outputs = []
             for result in results:
@@ -373,8 +373,6 @@ class LLM(torch.nn.Module):
             for b_index in range(batch_size):
                 partial_sequences_per_batch = []
                 for seq_index in range(seq_len):
-                    # if selected_samples[b_index, seq_index] == self.tokenizer.pad_token_id:
-                    #    break
                     prefix = self.tokenizer.decode(selected_samples[b_index, 0 : seq_index + 1], skip_special_tokens=False)
                     partial_sequences_per_batch.append(prefix)
                 partial_sequences.append(partial_sequences_per_batch)

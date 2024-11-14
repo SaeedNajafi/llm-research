@@ -1,5 +1,3 @@
-from typing import List
-
 import torch
 from torch.distributions import Categorical
 
@@ -21,12 +19,12 @@ def compute_entropy_loss(
         entropies = distributions.entropy() * entropy_masks
         prefix_log_ps = torch.cumsum(token_log_ps, dim=2)
         shifted_prefix_log_ps = torch.roll(prefix_log_ps, 1, dims=2)
-        # batchsize, sample_size, seq_len
+        # batch_size, sample_size, seq_len
         shifted_prefix_log_ps[:, :, 0] = 1.0
         part_one = shifted_prefix_log_ps * entropies.detach()
         part_two = entropies
         objective = torch.sum(part_one + part_two, dim=2) / actual_lens
-    else:            
+    else:
         objective = torch.sum(-token_log_ps * entropy_masks, dim=2) / actual_lens
     return -objective.mean()
 
@@ -43,9 +41,7 @@ def form_returns(rewards: torch.FloatTensor) -> torch.FloatTensor:
     return torch.flip(reversed_cum_sum, dims=(2,))
 
 
-def normalize_signals(
-    signals: torch.FloatTensor, normalization_type: str
-) -> torch.FloatTensor:
+def normalize_signals(signals: torch.FloatTensor, normalization_type: str) -> torch.FloatTensor:
     """Zscore or normalize between [0, 1]."""
     if normalization_type == "no_normalize":
         return signals
@@ -57,6 +53,7 @@ def normalize_signals(
         max_s = signals.max()
         min_s = signals.min()
         return (signals - min_s) / (max_s - min_s + 1e-8)
+
 
 def rloo_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:
     """Leave-one-out normalization."""
