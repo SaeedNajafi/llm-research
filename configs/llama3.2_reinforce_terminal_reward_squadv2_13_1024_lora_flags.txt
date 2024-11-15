@@ -17,7 +17,7 @@
 --max_eval_step=10
 --num_epochs=2
 --steps_before_evaluation=32
---gradient_accumulation_steps=8
+--gradient_accumulation_steps=4
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation
@@ -47,9 +47,9 @@
 --rl_sample_size=8
 --iterative_chunk_size=2
 --reward_normalization_type=linear
---compute_per_step_entropy
+--compute_per_step_entropy=false
 --entropy_coef=0.1
---with_baseline=false
+--with_baseline
 --baseline_momentum=0.9
 --include_policy_ref_kl=false
 --policy_ref_kl_coef=0.1

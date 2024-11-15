@@ -38,11 +38,11 @@
 --weight_decay=0.001
 --mode=train
 --seed=13
---project_name=llm_research_squadv2_rl_13_1024_hard_em
+--project_name=llm_rl_research
+--group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
+--run_name=hard_em
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=4
 --ddp
 --objective_type=hard_em
---rl_sample_size=10
---iterative_chunk_size=1
