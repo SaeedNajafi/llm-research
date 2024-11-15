@@ -36,12 +36,6 @@ repos:
     hooks:
       - id: mypy
 
-
-  - repo: https://github.com/PyCQA/docformatter
-    rev: v1.7.5
-    hooks:
-      - id: docformatter
-
   - repo: https://github.com/nbQA-dev/nbQA
     rev: 1.7.1
     hooks:

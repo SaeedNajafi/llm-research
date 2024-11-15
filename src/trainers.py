@@ -1,15 +1,12 @@
 """The main module for different objectives to train the policy (llm)."""
 
-from itertools import chain
 from typing import Any, List, Optional
 
 import torch
 from absl import flags, logging
-from torch.utils.data import DataLoader
 
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
-from src.utils.general_utils import DictDataset
 from src.utils.rl_utils import compute_entropy_loss, form_returns, normalize_signals
 
 FLAGS = flags.FLAGS
@@ -53,7 +50,9 @@ class LossCalculator:
             self.ref_policy_lm = ref_policy_lm
         if FLAGS.with_baseline:
             # For simple, time-step based average return.
-            self.baseline_returns = {idx: 0.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)}
+            self.baseline_returns = torch.zeros(
+                (FLAGS.input_max_length + FLAGS.output_max_length + 1,), dtype=torch.float64, device=self.policy_lm.device
+            )
 
         self.objective_type = objective_type
         self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
@@ -196,7 +195,6 @@ class LossCalculator:
         model.
         """
         sample_data = self.sample_and_generate_details(batch)
-        batch_size = len(batch["gold_answers"])
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
         per_step_rewards = self.reward_calculator.compute_per_step_rewards(
             gold_answers,
@@ -273,50 +271,30 @@ class LossCalculator:
         #                 exit()
 
         normalized_rewards = normalize_signals(per_step_rewards, normalization_type=FLAGS.reward_normalization_type)
-        returns = form_returns(normalized_rewards)
-
-        # normalized_returns = normalize_signals(
-        #    returns, normalization_type=FLAGS.reward_normalization_type, terminal_reward_only=False
-        # )
-
+        masks_per_step = torch.where(sample_data["labels_to_consider"] == -100, 0, 1)
+        returns = form_returns(normalized_rewards * masks_per_step)
+        normalized_returns = normalize_signals(returns, normalization_type=FLAGS.reward_normalization_type)
+        normalized_returns = normalized_returns * masks_per_step
         if not FLAGS.with_baseline:
-            masks_per_step = torch.where(sample_data["labels_to_consider"] == -100, 0, 1)
-            loss = -torch.mean(sample_data["token_log_ps"] * returns * masks_per_step)
+            loss = -torch.mean(torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns, dim=2), dim=1), dim=0)
         else:
-            objective = 0.0
-            if FLAGS.with_baseline:
-                current_batch_sample_average_returns = {
-                    idx: 0.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)
-                }
-                current_batch_sample_average_returns_counter = {
-                    idx: 1.0 for idx in range(FLAGS.input_max_length + FLAGS.output_max_length + 1)
-                }
+            max_len = returns.size()[2]
+            current_minibatch_baseline_returns = torch.sum(torch.sum(normalized_returns, dim=0), dim=0)
+            non_zero_counts = torch.sum(torch.sum(masks_per_step, dim=0), dim=0)
+            current_minibatch_baseline_returns = current_minibatch_baseline_returns / non_zero_counts
+            old_average = self.baseline_returns[:max_len]
+            returns_after_baselines = normalized_returns - old_average
+            loss = -torch.mean(
+                torch.mean(torch.sum(sample_data["token_log_ps"] * returns_after_baselines * masks_per_step, dim=2), dim=1),
+                dim=0,
+            )
 
-            for b_idx in range(batch_size):
-                for sample_idx in range(FLAGS.rl_sample_size):
-                    sequence_token_log_ps = sample_data["token_log_ps"][b_idx][sample_idx]
-                    sequence_returns = returns[(b_idx * FLAGS.rl_sample_size) + sample_idx]
-                    sequence_returns = torch.tensor(sequence_returns, dtype=torch.float64, device=self.policy_lm.device)
-                    if FLAGS.with_baseline:
-                        for idx in range(sequence_returns.size()[0]):
-                            current_batch_sample_average_returns[idx] += sequence_returns[idx]
-                            current_batch_sample_average_returns_counter[idx] += 1
-                            sequence_returns[idx] = sequence_returns[idx] - self.baseline_returns[idx]
-                    objective += torch.sum(sequence_token_log_ps * sequence_returns)
+            # Update the baseline
+            alpha = FLAGS.baseline_momentum
+            self.baseline_returns[:max_len] = alpha * old_average + (1.0 - alpha) * current_minibatch_baseline_returns
 
-            if FLAGS.with_baseline:
-                for idx, v in current_batch_sample_average_returns.items():
-                    current_batch_sample_average_returns[idx] = v / (
-                        FLAGS.rl_sample_size * batch_size * current_batch_sample_average_returns_counter[idx]
-                    )
-                for idx, v in self.baseline_returns.items():
-                    alpha = FLAGS.baseline_momentum
-                    self.baseline_returns[idx] = alpha * v + (1.0 - alpha) * current_batch_sample_average_returns[idx]
-
-                msg = f"\nbaseline reward used: {self.baseline_returns}"
-                logging.info(msg)
-
-            loss = -(objective / FLAGS.rl_sample_size) / batch_size
+            msg = f"\nbaseline reward used: {self.baseline_returns.tolist()}"
+            logging.info(msg)
 
         # Compute the per-step entropy if requested.
         if FLAGS.compute_per_step_entropy:

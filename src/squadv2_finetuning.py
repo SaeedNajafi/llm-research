@@ -26,7 +26,9 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("mode", "train", "train | inference")
 flags.DEFINE_integer("seed", 42, "random seed.")
-flags.DEFINE_string("project_name", "llm_research", "name for these runs.")
+flags.DEFINE_string("project_name", "llm_research", "project name for these runs.")
+flags.DEFINE_string("run_name", "some run name", "name for these runs.")
+flags.DEFINE_string("group_name", "some group name", "group name for these runs.")
 flags.DEFINE_string("experiment_type", "normal_no_icl", "normal_no_icl | normal_icl | explanation_icl | explanation_no_icl")
 flags.DEFINE_integer("train_batch_size", 8, "train batch size.")
 flags.DEFINE_integer("eval_batch_size", 8, "eval batch size.")
@@ -34,7 +36,7 @@ flags.DEFINE_integer("eval_batch_size", 8, "eval batch size.")
 
 def setup_wandb() -> Any:
     """Setup the wandb account."""
-    init_dict = {"project": FLAGS.project_name}
+    init_dict = {"project": FLAGS.project_name, "name": FLAGS.run_name, "group": FLAGS.group_name}
     run = wandb.init(**init_dict)
     wandb.config.update(FLAGS)
     return run
