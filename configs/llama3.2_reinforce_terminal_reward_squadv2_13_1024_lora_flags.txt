@@ -48,7 +48,3 @@
 --objective_type=reinforce_terminal_reward
 --rl_sample_size=8
 --iterative_chunk_size=1
---reward_normalization_type=linear
---compute_per_step_entropy=false
---with_baseline=false
---include_policy_ref_kl=false
