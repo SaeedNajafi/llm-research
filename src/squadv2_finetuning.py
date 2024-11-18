@@ -105,6 +105,7 @@ def main(argv: Any) -> None:
         "iterative_finetuning",
         "reinforce_terminal_reward",
         "teacher_forcing_reinforce",
+        "mml_iterative_reinforce",
     ]:
         if FLAGS.metric_type in ["llm2vec", "sentence_t5"]:
             # For these metrics, we will load the metric model on a separate gpu.

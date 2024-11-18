@@ -189,6 +189,7 @@ class LossCalculator:
         batch: torch.utils.data.Dataset,
         iterative_finetuning: bool = False,
         reinforce_terminal_reward: bool = False,
+        mixed: bool = False,
     ) -> torch.Tensor:
         """Use maximum marginal likelihood training to compute the loss."""
         assert FLAGS.rl_sample_size > 1
@@ -240,14 +241,16 @@ class LossCalculator:
 
         # Making sure to be between zero and one.
         normalized_scores = normalize_signals(sample_scores_tensor, normalization_type="linear")
-        if (not iterative_finetuning) and (not reinforce_terminal_reward):
+        mml_loss = 0.0
+        iterative_loss = 0.0
+        reinforce_loss = 0.0
+        if ((not iterative_finetuning) and (not reinforce_terminal_reward)) or mixed:
             # These are full sequence returns.
             # This is the MML objective.
             log_of_scores = torch.log(normalized_scores + 1e-12)
-            loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_scores, dim=1), dim=0)
-            return loss
+            mml_loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_scores, dim=1), dim=0)
 
-        elif iterative_finetuning and (not reinforce_terminal_reward):
+        elif (iterative_finetuning and (not reinforce_terminal_reward)) or mixed:
             # This is iterative fine-tuning.
             # Find the sample with the highest return.
             # These are full sequence returns.
@@ -256,18 +259,18 @@ class LossCalculator:
             # Use if it is a good sample.
             return_masks = (max_values > 0.5).float()
             selected_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices) * return_masks
-            loss = -torch.mean(
+            iterative_loss = -torch.mean(
                 selected_log_probs.view(
                     batch_size,
                 ),
                 dim=0,
             )
-            return loss
 
-        elif (not iterative_finetuning) and reinforce_terminal_reward:
+        elif ((not iterative_finetuning) and reinforce_terminal_reward) or mixed:
             # reinforce with terminal reward without per-step rewards.
-            loss = -torch.mean(sequence_log_probs * normalized_scores)
-            return loss
+            reinforce_loss = -torch.mean(sequence_log_probs * normalized_scores)
+
+        return reinforce_loss + mml_loss + iterative_loss
 
     def hard_em_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Use maximum marginal likelihood training to compute the loss."""
@@ -307,6 +310,9 @@ class LossCalculator:
 
         elif self.objective_type == "reinforce_terminal_reward":
             return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward=True)
+
+        elif self.objective_type == "mml_iterative_reinforce":
+            return self.maximum_marginal_likelihood_loss(batch, mixed=True)
 
         elif self.objective_type == "reinforce":
             return self.reinforce_loss(batch)
