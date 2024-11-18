@@ -200,7 +200,8 @@ def load_model_and_optimizer(
         logging.info(f"Loading states from {input_dir}.")
 
     if distributed_strategy == "ddp":
-        map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        # map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        map_location = {f"cuda:{torch.cuda.current_device()}"}
         input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
         if not optimizer_only:
@@ -208,7 +209,8 @@ def load_model_and_optimizer(
         optimizer.load_state_dict(state_dict["optim_state"])
 
     elif distributed_strategy == "fsdp":
-        map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        # map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
+        map_location = {f"cuda:{torch.cuda.current_device()}"}
         input_dir = os.path.join(input_dir, "model_optim.bin")
         state_dict = torch.load(input_dir, map_location=map_location)
         with FSDP.state_dict_type(
@@ -375,8 +377,8 @@ def find_checkpoint(model: Any) -> Tuple[int, int]:
         logging.info(f"Checkpoint found at {full_ckpt_dir}.")
         checkpointed_step, checkpointed_epoch = load_checkpoint(model, full_ckpt_dir)
     else:
-        checkpointed_epoch = 1
-        checkpointed_step = 1
+        checkpointed_epoch = 0
+        checkpointed_step = 0
     return checkpointed_step, checkpointed_epoch
 
 

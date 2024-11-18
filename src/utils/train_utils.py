@@ -112,7 +112,7 @@ def train(
     evaluation(model, "eval", eval_dataloader, FLAGS.prediction_file, rank, world_size, wandb_run, metric)
 
     # Start the training loop
-    for epoch in range(checkpointed_epoch - 1, FLAGS.num_epochs):
+    for epoch in range(checkpointed_epoch, FLAGS.num_epochs):
         # stop when the maximum number of training steps is reached
         if max_steps_reached:
             break
