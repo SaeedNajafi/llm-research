@@ -131,6 +131,6 @@ def create_squadv2_dataloader(
         shuffle=False,
         batch_size=batch_size,
         sampler=DistributedSampler(dataset, shuffle=shuffle, num_replicas=world_size, rank=rank),
-        num_workers=8,
+        num_workers=4,
     )
     return dataloader

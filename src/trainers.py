@@ -128,33 +128,45 @@ class LossCalculator:
             token_log_ps.append(token_log_ps_arr)
             partial_samples.append(partial_samples_arr)
 
-        max_len = actual_lens_tensor.max()
-        # Pad sequences up until max_len
-        token_log_ps_flattened = []
-        flattened_labels_to_consider = []
-        for b_idx in range(batch_size):
-            for sample_idx in range(FLAGS.rl_sample_size):
-                # pad labels to consider
-                cur_labels_tensor = final_labels_to_consider[b_idx][sample_idx]
-                cur_len = cur_labels_tensor.size()[0]
-                pad_label_tensor = torch.tensor(
-                    [-100] * (max_len - cur_len), dtype=cur_labels_tensor.dtype, device=cur_labels_tensor.device
-                )
-                flattened_labels_to_consider.append(torch.cat((cur_labels_tensor, pad_label_tensor), dim=0))
+        try:
+            max_len = actual_lens_tensor.max()
+            # Pad sequences up until max_len
+            token_log_ps_flattened = []
+            flattened_labels_to_consider = []
+            for b_idx in range(batch_size):
+                for sample_idx in range(FLAGS.rl_sample_size):
+                    # pad labels to consider
+                    cur_labels_tensor = final_labels_to_consider[b_idx][sample_idx]
+                    cur_len = cur_labels_tensor.size()[0]
+                    pad_label_tensor = torch.tensor(
+                        [-100] * (max_len - cur_len), dtype=cur_labels_tensor.dtype, device=cur_labels_tensor.device
+                    )
+                    flattened_labels_to_consider.append(torch.cat((cur_labels_tensor, pad_label_tensor), dim=0))
 
-                # Pad samples with the last one, corresponding to padding the generated ids with the pad token.
-                last_partial_sample = partial_samples[b_idx][sample_idx][-1]
-                partial_samples[b_idx][sample_idx].extend([last_partial_sample] * (max_len - cur_len))
+                    # Pad samples with the last one, corresponding to padding the generated ids with the pad token.
+                    last_partial_sample = partial_samples[b_idx][sample_idx][-1]
+                    partial_samples[b_idx][sample_idx].extend([last_partial_sample] * (max_len - cur_len))
 
-                # pad token log_ps
-                cur_token_log_ps_tensor = token_log_ps[b_idx][sample_idx]
-                pad_token_log_ps_tensor = torch.tensor(
-                    [0.0] * (max_len - cur_len), dtype=cur_token_log_ps_tensor.dtype, device=cur_token_log_ps_tensor.device
-                )
-                token_log_ps_flattened.append(torch.cat((cur_token_log_ps_tensor, pad_token_log_ps_tensor), dim=0))
+                    # pad token log_ps
+                    cur_token_log_ps_tensor = token_log_ps[b_idx][sample_idx]
+                    pad_token_log_ps_tensor = torch.tensor(
+                        [0.0] * (max_len - cur_len), dtype=cur_token_log_ps_tensor.dtype, device=cur_token_log_ps_tensor.device
+                    )
+                    token_log_ps_flattened.append(torch.cat((cur_token_log_ps_tensor, pad_token_log_ps_tensor), dim=0))
 
-        final_token_log_ps = torch.stack(token_log_ps_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
-        final_labels_to_consider = torch.stack(flattened_labels_to_consider, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
+            final_token_log_ps = torch.stack(token_log_ps_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
+            final_labels_to_consider = torch.stack(flattened_labels_to_consider, dim=0).view(
+                batch_size, FLAGS.rl_sample_size, -1
+            )
+        except Exception:
+            print(actual_lens_tensor)
+            for b_idx in range(batch_size):
+                for sample_idx in range(FLAGS.rl_sample_size):
+                    cur_labels_tensor = final_labels_to_consider[b_idx][sample_idx]
+                    print(len(cur_labels_tensor))
+                    print(cur_labels_tensor)
+                    print(token_log_ps[b_idx][sample_idx].size())
+                    print("Saeed.")
 
         return_data = {
             "actual_lens": actual_lens_tensor,
@@ -179,8 +191,9 @@ class LossCalculator:
         normalized_rewards = normalize_signals(per_step_rewards, normalization_type=FLAGS.reward_normalization_type)
         masks_per_step = torch.where(sample_data["labels_to_consider"] == -100, 0, 1)
         returns = form_returns(normalized_rewards * masks_per_step)
-        normalized_returns = normalize_signals(returns, normalization_type=FLAGS.reward_normalization_type)
-        normalized_returns = normalized_returns * masks_per_step
+        # normalized_returns = normalize_signals(returns, normalization_type=FLAGS.reward_normalization_type)
+        # normalized_returns = normalized_returns * masks_per_step
+        normalized_returns = returns
         loss = -torch.mean(torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns, dim=2), dim=1), dim=0)
         return loss
 
