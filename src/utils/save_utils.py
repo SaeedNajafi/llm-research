@@ -200,19 +200,15 @@ def load_model_and_optimizer(
         logging.info(f"Loading states from {input_dir}.")
 
     if distributed_strategy == "ddp":
-        # map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
-        map_location = {f"cuda:{torch.cuda.current_device()}"}
         input_dir = os.path.join(input_dir, "model_optim.bin")
-        state_dict = torch.load(input_dir, map_location=map_location)
+        state_dict = torch.load(input_dir, weights_only=True, map_location=model.device)
         if not optimizer_only:
             model.module.load_state_dict(state_dict["model_state"])
         optimizer.load_state_dict(state_dict["optim_state"])
 
     elif distributed_strategy == "fsdp":
-        # map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
-        map_location = {f"cuda:{torch.cuda.current_device()}"}
         input_dir = os.path.join(input_dir, "model_optim.bin")
-        state_dict = torch.load(input_dir, map_location=map_location)
+        state_dict = torch.load(input_dir, weights_only=True, map_location="cpu")
         with FSDP.state_dict_type(
             model,
             StateDictType.FULL_STATE_DICT,
@@ -252,7 +248,7 @@ def save_scheduler(
         logging.info(f"Scheduler state saved to {output_scheduler_file}.")
 
 
-def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distributed_strategy: str) -> None:
+def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distributed_strategy: str, device: str) -> None:
     """Load scheduler states.
 
     Args:
@@ -266,8 +262,7 @@ def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distribute
         input_scheduler_file = os.path.join(input_dir, sched_name)
         if rank == 0:
             logging.info(f"Loading scheduler state from {input_scheduler_file}.")
-        map_location = {"cuda:%d" % 0: "cuda:%d" % rank}
-        state_dict = torch.load(input_scheduler_file, map_location=map_location)
+        state_dict = torch.load(input_scheduler_file, weights_only=True, map_location=device)
         scheduler.load_state_dict(state_dict)
         if rank == 0:
             logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
@@ -277,7 +272,7 @@ def load_scheduler(scheduler: LRScheduler, input_dir: str, rank: int, distribute
         input_scheduler_file = os.path.join(input_dir, sched_name)
         if rank == 0:
             logging.info(f"Loading scheduler state from {input_scheduler_file}.")
-        state_dict = torch.load(input_scheduler_file)
+        state_dict = torch.load(input_scheduler_file, weights_only=True, map_location=device)
         scheduler.load_state_dict(state_dict)
         if rank == 0:
             logging.info(f"Scheduler state loaded from {input_scheduler_file}.")
@@ -349,7 +344,7 @@ def load_checkpoint(model: Any, checkpoint_dir: str) -> Tuple[int, int]:
 
     # Skip overwriting base model weights if peft is enabled.
     load_model_and_optimizer(model.optimizer, model.model, rank, checkpoint_dir, optimizer_only=model.is_peft_adapter_restored)
-    load_scheduler(model.scheduler, checkpoint_dir, rank, distributed_strategy=model.distributed_strategy)
+    load_scheduler(model.scheduler, checkpoint_dir, rank, distributed_strategy=model.distributed_strategy, device=model.device)
     dist.barrier()
     return step, epoch
 
