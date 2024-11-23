@@ -23,6 +23,7 @@ flags.DEFINE_float("baseline_momentum", 0.9, "momentum used to compute the avera
 flags.DEFINE_boolean("compute_per_step_entropy", False, "Whether to add per-step entropy to the loss in RL training.")
 flags.DEFINE_float("entropy_coef", 0.1, "Coefficient used to mix per-step entropy loss in RL training.")
 flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
+flags.DEFINE_string("mml_version", "version_1", "Which version to compute the mml loss.")
 flags.DEFINE_boolean(
     "include_policy_ref_kl", False, "Whether to apply the KL divergence between the policy and the reference policy."
 )
@@ -247,8 +248,11 @@ class LossCalculator:
         if ((not iterative_finetuning) and (not reinforce_terminal_reward)) or mixed:
             # These are full sequence returns.
             # This is the MML objective.
-            log_of_scores = torch.log(normalized_scores + 1e-12)
-            mml_loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_scores, dim=1), dim=0)
+            if FLAGS.mml_version == "version_1":
+                log_of_scores = torch.log(normalized_scores + 1e-12)
+                mml_loss = -torch.mean(torch.logsumexp(sequence_log_probs + log_of_scores, dim=1), dim=0)
+            elif FLAGS.mml_version == "version_2":
+                mml_loss = -torch.mean(torch.logsumexp(sequence_log_probs + normalized_scores, dim=1), dim=0)
 
         elif (iterative_finetuning and (not reinforce_terminal_reward)) or mixed:
             # This is iterative fine-tuning.
