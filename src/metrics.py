@@ -434,13 +434,13 @@ class RewardCalculator:
                         scores = self.qa_metric_model.compute_metric(partial_predictions, templated_references_expanded)
                         sequence_rewards = scores.tolist()
 
-                    # if not terminal_reward_only:
-                    #     # Reward r_t = score(z1, z2, ..., zt) - score(z1, z2, ..., zt-1)
-                    #     prev_seq_reward = 0.0
-                    #     for seq_idx in range(len(sequence_rewards)):
-                    #         temp = sequence_rewards[seq_idx]
-                    #         sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
-                    #         prev_seq_reward = temp
+                    if not terminal_reward_only:
+                        # Reward r_t = score(z1, z2, ..., zt) - score(z1, z2, ..., zt-1)
+                        prev_seq_reward = 0.0
+                        for seq_idx in range(len(sequence_rewards)):
+                            temp = sequence_rewards[seq_idx]
+                            sequence_rewards[seq_idx] = sequence_rewards[seq_idx] - prev_seq_reward
+                            prev_seq_reward = temp
 
                     per_example_rewards.append(sequence_rewards)
                 rewards.append(per_example_rewards)

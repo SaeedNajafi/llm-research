@@ -41,18 +41,29 @@ def form_returns(rewards: torch.FloatTensor) -> torch.FloatTensor:
     return torch.flip(reversed_cum_sum, dims=(2,))
 
 
-def normalize_signals(signals: torch.FloatTensor, normalization_type: str) -> torch.FloatTensor:
+def normalize_signals(signals: torch.FloatTensor, normalization_type: str, masks: torch.BoolTensor = None) -> torch.FloatTensor:
     """Zscore or normalize between [0, 1]."""
     if normalization_type == "no_normalize":
         return signals
-    elif normalization_type == "zscore":
-        mean_s = signals.mean()
-        std_s = signals.std()
-        return (signals - mean_s) / (std_s + 1e-8)
-    elif normalization_type == "linear":
-        max_s = signals.max()
-        min_s = signals.min()
-        return (signals - min_s) / (max_s - min_s + 1e-8)
+    if masks is None:
+        if normalization_type == "zscore":
+            mean_s = signals.mean()
+            std_s = signals.std()
+            return (signals + 1e-8 - mean_s) / (std_s + 1e-8)
+        elif normalization_type == "linear":
+            max_s = signals.max()
+            min_s = signals.min()
+            return (signals + 1e-8 - min_s) / (max_s - min_s + 1e-8)
+    else:
+        all_valid_values = torch.masked_select(signals, masks).flatten()
+        if normalization_type == "zscore":
+            mean_s = all_valid_values.mean()
+            std_s = all_valid_values.std()
+            return ((signals + 1e-8 - mean_s) / (std_s + 1e-8)) * torch.where(masks, 1, 0)
+        elif normalization_type == "linear":
+            max_s = all_valid_values.max()
+            min_s = all_valid_values.min()
+            return ((signals + 1e-8 - min_s) / (max_s - min_s + 1e-8)) * torch.where(masks, 1, 0)
 
 
 def rloo_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:

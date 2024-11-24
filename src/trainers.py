@@ -189,12 +189,10 @@ class LossCalculator:
             templated_rewards=True,
         )
         per_step_rewards = torch.tensor(per_step_rewards, dtype=torch.float64, device=self.policy_lm.device)
-        normalized_rewards = normalize_signals(per_step_rewards, normalization_type=FLAGS.reward_normalization_type)
-        masks_per_step = torch.where(sample_data["labels_to_consider"] == -100, 0, 1)
-        returns = form_returns(normalized_rewards * masks_per_step)
-        # normalized_returns = normalize_signals(returns, normalization_type=FLAGS.reward_normalization_type)
-        # normalized_returns = normalized_returns * masks_per_step
-        normalized_returns = returns
+
+        masks = sample_data["labels_to_consider"] != -100
+        returns = form_returns(per_step_rewards * torch.where(masks, 1, 0))
+        normalized_returns = normalize_signals(returns, masks=masks, normalization_type=FLAGS.reward_normalization_type)
         loss = -torch.mean(torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns, dim=2), dim=1), dim=0)
         return loss
 
