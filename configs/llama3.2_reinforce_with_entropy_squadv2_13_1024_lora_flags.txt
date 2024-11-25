@@ -1,7 +1,7 @@
 --dev_file=/home/saeednjf/llm-research/data/1024-shot-datasets/squad/1024-13-dev.tsv
 --train_file=/home/saeednjf/llm-research/data/1024-shot-datasets/squad/1024-13-train.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/reinforce_step_rewards_lr_1e-5
---prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/reinforce_step_rewards_lr_1e-5/internal_validation_prediction_squadv2.csv
+--checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/reinforce_step_rewards_lr_1e-5_entropy_0.1
+--prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/reinforce_step_rewards_lr_1e-5_entropy_0.1/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -40,7 +40,7 @@
 --seed=13
 --project_name=llm_rl_research
 --group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
---run_name=reinforce_step_rewards_samplesize_8_lr_1e-5
+--run_name=reinforce_step_rewards_samplesize_8_lr_1e-5_entropy_0.1
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=4
@@ -49,3 +49,5 @@
 --rl_sample_size=8
 --iterative_chunk_size=1
 --reward_normalization_type=linear
+--compute_per_step_entropy
+--entropy_coef=0.1
