@@ -3,11 +3,11 @@
 from typing import Any, List, Optional
 
 import torch
-from absl import flags
+from absl import flags, logging
 
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
-from src.utils.rl_utils import form_returns, normalize_signals, compute_entropy_loss
+from src.utils.rl_utils import compute_entropy_loss, form_returns, normalize_signals
 
 FLAGS = flags.FLAGS
 
@@ -19,7 +19,7 @@ flags.DEFINE_integer(
 )
 flags.DEFINE_boolean("with_baseline", False, "Whether to use the baseline reward in RL objective.")
 flags.DEFINE_string("reward_normalization_type", "zscore", "zscore | mml_normalize | normalize | rloo_normalize | no_normalize")
-flags.DEFINE_float("baseline_momentum", 0.9, "momentum used to compute the average reward in the RL baseline.")
+flags.DEFINE_float("baseline_momentum", 0.1, "momentum used to compute the average reward in the RL baseline.")
 flags.DEFINE_boolean("compute_per_step_entropy", False, "Whether to add per-step entropy to the loss in RL training.")
 flags.DEFINE_float("entropy_coef", 0.1, "Coefficient used to mix per-step entropy loss in RL training.")
 flags.DEFINE_string("objective_type", "reinforce", "Different objectives to get the loss for training the llm.")
@@ -64,8 +64,7 @@ class LossCalculator:
         return loss
 
     def sample_and_generate_details(
-        self, batch: torch.utils.data.Dataset,
-        teacher_forcing_labels: Optional[torch.Tensor] = None, to_train: bool = True
+        self, batch: torch.utils.data.Dataset, teacher_forcing_labels: Optional[torch.Tensor] = None, to_train: bool = True
     ) -> Any:
         """Compute per-step information while sampling.
 
@@ -189,8 +188,7 @@ class LossCalculator:
         # We should add a padding code to here!
         return return_data
 
-
-    def reinforce_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+    def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = False) -> torch.Tensor:
         """Use reinforce with per-step to compute the loss."""
         sample_data = self.sample_and_generate_details(batch)
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
@@ -199,14 +197,56 @@ class LossCalculator:
             sample_data["partial_samples"],
             output_template=self.policy_lm.output_template,
             templated_rewards=True,
+            terminal_reward_only=terminal_reward_only,
         )
         per_step_rewards = torch.tensor(per_step_rewards, dtype=torch.float64, device=self.policy_lm.device)
-
         masks = sample_data["labels_to_consider"] != -100
-        returns = form_returns(per_step_rewards * torch.where(masks, 1, 0))
-        normalized_returns = normalize_signals(returns, masks=masks, normalization_type=FLAGS.reward_normalization_type)
-        loss = -torch.mean(torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns, dim=2), dim=1), dim=0)
-        
+        if terminal_reward_only:
+            returns = per_step_rewards
+            normalized_returns = normalize_signals(returns, normalization_type=FLAGS.reward_normalization_type)
+        else:
+            returns = form_returns(per_step_rewards * torch.where(masks, 1, 0))
+            normalized_returns = normalize_signals(returns, masks=masks, normalization_type=FLAGS.reward_normalization_type)
+
+        if FLAGS.with_baseline:
+            max_len = normalized_returns.size()[2]
+            current_minibatch_baseline_returns = torch.sum(torch.sum(normalized_returns, dim=0), dim=0)
+            non_zero_counts = torch.sum(torch.sum(torch.where(masks, 1, 0), dim=0), dim=0)
+            current_minibatch_baseline_returns = current_minibatch_baseline_returns / non_zero_counts[:max_len]
+            old_average = self.baseline_returns[:max_len]
+            normalized_returns_after_baselines = normalized_returns - old_average
+            if terminal_reward_only:
+                seq_log_ps = torch.sum(sample_data["token_log_ps"] * torch.where(masks, 1, 0), dim=2)
+                loss = -torch.mean(
+                    torch.mean(
+                        seq_log_ps * normalized_returns_after_baselines,
+                        dim=1,
+                    ),
+                    dim=0,
+                )
+            else:
+                loss = -torch.mean(
+                    torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns_after_baselines, dim=2), dim=1), dim=0
+                )
+
+            # Update the baseline
+            alpha = FLAGS.baseline_momentum
+            self.baseline_returns[:max_len] = alpha * old_average + (1.0 - alpha) * current_minibatch_baseline_returns
+
+            msg = f"\nbaseline reward used: {self.baseline_returns.tolist()}"
+            logging.info(msg)
+
+        else:
+            if terminal_reward_only:
+                loss = -torch.mean(
+                    torch.mean(
+                        torch.sum(sample_data["token_log_ps"] * torch.where(masks, 1, 0), dim=2) * normalized_returns, dim=1
+                    ),
+                    dim=0,
+                )
+            else:
+                loss = -torch.mean(torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns, dim=2), dim=1), dim=0)
+
         # Compute the per-step entropy if requested.
         if FLAGS.compute_per_step_entropy:
             entropy_loss = compute_entropy_loss(
@@ -215,7 +255,7 @@ class LossCalculator:
                 sample_data["token_log_ps"],
                 sample_data["logits"],
                 approximate_entropy=False,
-                perform_length_normalization=True
+                perform_length_normalization=True,
             )
             msg = f"\nentropy loss computed: {entropy_loss}"
             logging.info(msg)
@@ -355,7 +395,8 @@ class LossCalculator:
             return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
 
         elif self.objective_type == "reinforce_terminal_reward":
-            return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward=True)
+            # return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward=True)
+            return self.reinforce_loss(batch, terminal_reward_only=True)
 
         elif self.objective_type == "mml_iterative_reinforce":
             return self.maximum_marginal_likelihood_loss(batch, mixed=True)

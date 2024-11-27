@@ -1,7 +1,7 @@
 --dev_file=/home/saeednjf/llm-research/data/1024-shot-datasets/squad/1024-13-dev.tsv
 --train_file=/home/saeednjf/llm-research/data/1024-shot-datasets/squad/1024-13-train.tsv
---checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/teacher_forcing_reinforce_terminal_reward
---prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/teacher_forcing_reinforce_terminal_reward/internal_validation_prediction_squadv2.csv
+--checkpoint_folder=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/reinforce_terminal_reward_v2
+--prediction_file=/home/saeednjf/nearline/rrg-afyshe/saeednjf/rl-exps-november/squadv2_1024_13/reinforce_terminal_reward_v2/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -15,7 +15,7 @@
 --use_profiler=false
 --max_train_step=0
 --max_eval_step=0
---num_epochs=10
+--num_epochs=5
 --steps_before_evaluation=32
 --gradient_accumulation_steps=8
 --gradient_clipping
@@ -40,7 +40,7 @@
 --seed=13
 --project_name=llm_rl_research
 --group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
---run_name=supervised_reinforce_terminal_reward_samplesize_8
+--run_name=reinforce_terminal_reward_version_2_samplesize_8
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=4
@@ -48,3 +48,4 @@
 --objective_type=reinforce_terminal_reward
 --rl_sample_size=8
 --iterative_chunk_size=1
+--reward_normalization_type=linear
