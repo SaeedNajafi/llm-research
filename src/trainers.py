@@ -195,8 +195,8 @@ class LossCalculator:
         per_step_rewards = self.reward_calculator.compute_per_step_rewards(
             gold_answers,
             sample_data["partial_samples"],
-            output_template=self.policy_lm.output_template,
-            templated_rewards=True,
+            # output_template=self.policy_lm.output_template,
+            # templated_rewards=True,
             terminal_reward_only=terminal_reward_only,
         )
         per_step_rewards = torch.tensor(per_step_rewards, dtype=torch.float64, device=self.policy_lm.device)
@@ -238,12 +238,8 @@ class LossCalculator:
 
         else:
             if terminal_reward_only:
-                loss = -torch.mean(
-                    torch.mean(
-                        torch.sum(sample_data["token_log_ps"] * torch.where(masks, 1, 0), dim=2) * normalized_returns, dim=1
-                    ),
-                    dim=0,
-                )
+                seq_log_ps = torch.sum(sample_data["token_log_ps"] * torch.where(masks, 1, 0), dim=2)
+                loss = -torch.mean(torch.mean(seq_log_ps * normalized_returns.squeeze(-1), dim=1), dim=0)
             else:
                 loss = -torch.mean(torch.mean(torch.sum(sample_data["token_log_ps"] * normalized_returns, dim=2), dim=1), dim=0)
 

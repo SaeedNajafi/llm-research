@@ -49,21 +49,21 @@ def normalize_signals(signals: torch.FloatTensor, normalization_type: str, masks
         if normalization_type == "zscore":
             mean_s = signals.mean()
             std_s = signals.std()
-            return (signals + 1e-8 - mean_s) / (std_s + 1e-8)
+            return (signals + 1e-12 - mean_s) / (std_s + 1e-12)
         elif normalization_type == "linear":
             max_s = signals.max()
             min_s = signals.min()
-            return (signals + 1e-8 - min_s) / (max_s - min_s + 1e-8)
+            return (signals + 1e-12 - min_s) / (max_s - min_s + 1e-12)
     else:
         all_valid_values = torch.masked_select(signals, masks).flatten()
         if normalization_type == "zscore":
             mean_s = all_valid_values.mean()
             std_s = all_valid_values.std()
-            return ((signals + 1e-8 - mean_s) / (std_s + 1e-8)) * torch.where(masks, 1, 0)
+            return ((signals + 1e-12 - mean_s) / (std_s + 1e-12)) * torch.where(masks, 1, 0)
         elif normalization_type == "linear":
             max_s = all_valid_values.max()
             min_s = all_valid_values.min()
-            return ((signals + 1e-8 - min_s) / (max_s - min_s + 1e-8)) * torch.where(masks, 1, 0)
+            return ((signals + 1e-12 - min_s) / (max_s - min_s + 1e-12)) * torch.where(masks, 1, 0)
 
 
 def rloo_normalize(rewards: torch.FloatTensor) -> torch.FloatTensor:
