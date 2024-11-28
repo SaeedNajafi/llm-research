@@ -72,6 +72,9 @@ class LLMGenerationOutput:
     partially_generated_sequences: List[List[str]] = field(default_factory=list)
 
 
+PREDICTION_RETURN_TYPE = Iterator[Tuple[Dict[str, str], torch.Tensor]]
+
+
 class LLM(torch.nn.Module):
     """Class to implement LLM."""
 
@@ -407,7 +410,7 @@ class LLM(torch.nn.Module):
 
         return llm_generation_output
 
-    def predict(self, batch: torch.utils.data.Dataset) -> Iterator[Tuple[Dict[str, str], torch.Tensor]]:
+    def predict(self, batch: torch.utils.data.Dataset) -> PREDICTION_RETURN_TYPE:
         """The main prediction loop."""
         llm_generation_outputs = self.generation_pass(
             batch,
@@ -419,8 +422,10 @@ class LLM(torch.nn.Module):
         )
         answers = llm_generation_outputs[0].predictions_str
         log_ps = llm_generation_outputs[0].final_log_ps
-        loss = -torch.mean(log_ps, dim=0).detach().float()
+        # This is the prediction loss.
+        prediction_loss = -torch.mean(log_ps, dim=0).detach().float()
         numpy_log_ps = log_ps.detach().float().cpu().numpy()
+
         for idx, answer in enumerate(answers):
             output_row = {
                 "potential_answer": answer,
@@ -430,7 +435,7 @@ class LLM(torch.nn.Module):
             if "gold_answers" in batch:
                 # Somehow gold_answers becomes a tuple.
                 output_row["gold_answer"] = batch["gold_answers"][idx]
-            yield output_row, loss
+            yield output_row, prediction_loss
 
 
 class Llama3QA(LLM):

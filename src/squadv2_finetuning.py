@@ -144,7 +144,7 @@ def main(argv: Any) -> None:
             rank,
             world_size,
             wandb_run,
-            qa_metric_squadv2_metrics,
+            [qa_metric_squadv2_metrics],
         )
 
         if rank == 0:
@@ -172,7 +172,7 @@ def main(argv: Any) -> None:
             rank,
             world_size,
             wandb_run,
-            qa_metric_squadv2_metrics,
+            [qa_metric_squadv2_metrics],
         )
 
     elif FLAGS.mode == "deploy":

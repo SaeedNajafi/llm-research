@@ -30,6 +30,7 @@ flags.DEFINE_boolean(
 flags.DEFINE_float(
     "policy_ref_kl_coef", 0.1, "Coefficient to apply the KL divergence between the policy and the reference policy."
 )
+flags.DEFINE_boolean("compute_true_validation_loss", True, "True or False?")
 
 
 class LossCalculator:
@@ -59,9 +60,19 @@ class LossCalculator:
         self.reward_calculator = RewardCalculator(reward_name, weights_base_folder)
 
     def teacher_forcing_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
-        log_likelihood = self.policy_lm.train(batch)
+        log_likelihood = self.policy_lm.train(batch, per_step_scores=False, to_train=True)
         loss = -torch.mean(log_likelihood, dim=0)
         return loss
+
+    def compute_true_validation_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """Compute the true validation loss under the model."""
+        if FLAGS.compute_true_validation_loss:
+            # It uses teacher forcing over the validation data to compute the loss.
+            validation_log_likelihood = self.policy_lm.train(batch, per_step_scores=False, to_train=False)
+            validation_true_loss = -torch.mean(validation_log_likelihood, dim=0).detach().float()
+            return validation_true_loss
+        else:
+            raise ValueError("--compute_true_validation_loss should be true!")
 
     def sample_and_generate_details(
         self, batch: torch.utils.data.Dataset, teacher_forcing_labels: Optional[torch.Tensor] = None, to_train: bool = True

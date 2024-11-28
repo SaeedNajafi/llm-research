@@ -121,7 +121,13 @@ def create_squadv2_dataloader(
         dataset = DictDataset(data)
         shuffle = True
 
-    elif fold_name in ["dev", "test"]:
+    elif fold_name == "dev":
+        # To compute the correct validation loss, we need squad_outputs.
+        data = model.prepare_text_for_train(squad_inputs, squad_outputs, squad_ids, gold_answers=gold_outputs)
+        dataset = DictDataset(data)
+        shuffle = False
+
+    elif fold_name == "test":
         data = model.prepare_text_for_inference(squad_inputs, squad_ids, gold_answers=gold_outputs)
         dataset = DictDataset(data)
         shuffle = False
