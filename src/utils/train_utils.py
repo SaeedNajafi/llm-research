@@ -127,7 +127,7 @@ def train(
     _, checkpointed_epoch = find_checkpoint(model)
 
     # Evaluate the pre-trained model.
-    evaluation(model, "eval", eval_dataloader, FLAGS.prediction_file, rank, world_size, wandb_run, metrics, loss_calculator)
+    evaluation(model, "dev", eval_dataloader, FLAGS.prediction_file, rank, world_size, wandb_run, metrics, loss_calculator)
 
     # Start the training loop
     for epoch in range(checkpointed_epoch, FLAGS.num_epochs):
@@ -242,6 +242,7 @@ def train(
                                     if score_name == FLAGS.checkpoint_on_metric:
                                         if score_val > best_val_score:
                                             save_checkpoint(model, step + 1, epoch + 1)
+                                            best_val_score = score_val
                                             if rank == 0:
                                                 msg = f"best eval {score_name} on epoch {epoch + 1},"
                                                 msg += f" step {step + 1} is {best_val_score}."
@@ -326,6 +327,7 @@ def train(
                     if score_name == FLAGS.checkpoint_on_metric:
                         if score_val > best_val_score:
                             save_checkpoint(model, step + 1, epoch + 1)
+                            best_val_score = score_val
                             if rank == 0:
                                 msg = f"best eval {score_name} on epoch {epoch + 1} is {best_val_score}."
                                 logging.info(msg)
