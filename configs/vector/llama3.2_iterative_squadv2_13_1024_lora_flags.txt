@@ -17,7 +17,7 @@
 --max_eval_step=0
 --num_epochs=5
 --steps_before_evaluation=32
---gradient_accumulation_steps=2
+--gradient_accumulation_steps=8
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation

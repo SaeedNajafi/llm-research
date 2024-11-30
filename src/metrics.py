@@ -391,7 +391,8 @@ class RewardCalculator:
                     gold_answer_string = gold_answers[batch_idx][sample_idx]
                     references = str(gold_answer_string).split("_@_")
                     if templated_rewards and (output_template is not None):
-                        templated_references = [output_template.format(output=f"Final Answer: {ref}") for ref in references]
+                        # templated_references = [output_template.format(output=f"Final Answer: {ref}") for ref in references]
+                        templated_references = [output_template.format(output=ref) for ref in references]
                     else:
                         templated_references = references
                     partial_predictions = partial_outputs[batch_idx][sample_idx]

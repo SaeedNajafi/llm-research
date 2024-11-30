@@ -11,6 +11,16 @@ SCRIPT=$1
 CONFIG_FILE=$2
 LOG_DIR=$3
 NPROC_PER_NODE=$4
+RUN_MODE=$5
+CHECKPOINT_FOLDER=$6
+PREDICTION_FILE=$7
+GRADIENT_ACCUMULATION_STEPS=$8
+LR=$9
+LR_MIN=${10}
+RUN_NAME=${11}
+
+
+
 
 # enable conda env properly.
 source ${CURR_DIR}/job_submission/env_up.sh
@@ -40,11 +50,33 @@ export NCCL_DEBUG_SUBSYS=WARN
 export TORCH_CPP_LOG_LEVEL=INFO
 export LOGLEVEL=INFO
 
-srun -N "${SLURM_NNODES}" -l \
-        bash -c "TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun \
-                        --nproc-per-node=$NPROC_PER_NODE \
-                        --nnodes=$SLURM_JOB_NUM_NODES \
-                        --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
-                        --rdzv-id $RDVZ_ID \
-                        --rdzv-backend c10d \
-                        ${SCRIPT} --flagfile ${CONFIG_FILE} > ${LOG_PATH} 2>&1"
+
+if [ "${RUN_MODE}" = "tuning" ]; then
+        srun -N "${SLURM_NNODES}" -l \
+                bash -c "TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun \
+                                --nproc-per-node=$NPROC_PER_NODE \
+                                --nnodes=$SLURM_JOB_NUM_NODES \
+                                --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
+                                --rdzv-id $RDVZ_ID \
+                                --rdzv-backend c10d ${SCRIPT} --flagfile ${CONFIG_FILE} \
+                                --checkpoint_folder ${CHECKPOINT_FOLDER} \
+                                --prediction_file ${PREDICTION_FILE} \
+                                --gradient_accumulation_steps ${GRADIENT_ACCUMULATION_STEPS} \
+                                --lr ${LR} \
+                                --lr_min ${LR_MIN} \
+                                --run_name ${RUN_NAME} \
+                                --compute_true_validation_loss=false \
+                                --max_eval_step=256 \
+                                --num_epochs=2 \
+                                --t_0=2 > ${LOG_PATH} 2>&1"
+
+else
+        srun -N "${SLURM_NNODES}" -l \
+                bash -c "TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun \
+                                --nproc-per-node=$NPROC_PER_NODE \
+                                --nnodes=$SLURM_JOB_NUM_NODES \
+                                --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
+                                --rdzv-id $RDVZ_ID \
+                                --rdzv-backend c10d \
+                                ${SCRIPT} --flagfile ${CONFIG_FILE} > ${LOG_PATH} 2>&1"
+fi
