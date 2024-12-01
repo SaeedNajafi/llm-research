@@ -1,12 +1,15 @@
 """The main module for different objectives to train the policy (llm)."""
 
+from itertools import chain
 from typing import Any, List, Optional
 
 import torch
 from absl import flags, logging
+from torch.utils.data import DataLoader
 
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
+from src.utils.general_utils import DictDataset
 from src.utils.rl_utils import compute_entropy_loss, form_returns, normalize_signals
 
 FLAGS = flags.FLAGS
@@ -88,6 +91,7 @@ class LossCalculator:
         actual_lens = []
         labels_to_consider = []
         token_final_log_ps = []
+        full_generated_sample_ids = []
         logits = []
         for call_idx in range(num_iterative_calls):
             llm_generation_outputs: List[LLMGenerationOutput] = self.policy_lm.generation_pass(
@@ -105,6 +109,7 @@ class LossCalculator:
             actual_lens_per_call = llm_generation_outputs[0].actual_lens
             labels_to_consider_per_call = llm_generation_outputs[0].labels_to_consider
             token_final_log_ps_per_call = llm_generation_outputs[0].token_final_log_ps
+            full_generated_sample_ids_per_call = llm_generation_outputs[0].full_generated_sample_ids
             partial_generations_per_call = llm_generation_outputs[0].partially_generated_sequences
             logits_per_call = llm_generation_outputs[0].logits
             batch_size_extended, seq_len, vocab_size = logits_per_call.size()
@@ -122,6 +127,9 @@ class LossCalculator:
             actual_lens.append(actual_lens_per_call.view(batch_size, FLAGS.iterative_chunk_size))
             labels_to_consider.append(labels_to_consider_per_call.view(batch_size, FLAGS.iterative_chunk_size, -1))
             token_final_log_ps.append(token_final_log_ps_per_call.view(batch_size, FLAGS.iterative_chunk_size, -1))
+            full_generated_sample_ids.append(
+                full_generated_sample_ids_per_call.view(batch_size, FLAGS.iterative_chunk_size, -1)
+            )
             logits.append(logits_per_call.view(batch_size, FLAGS.iterative_chunk_size, seq_len, vocab_size))
             partial_generations.append(batch_partial_generations_per_call)
         sequence_log_probs = torch.cat(final_log_ps, dim=1)
@@ -129,22 +137,26 @@ class LossCalculator:
         batch_size = sequence_log_probs.size()[0]
         final_labels_to_consider = []
         token_log_ps = []
+        full_sample_ids = []
         final_logits = []
         partial_samples = []
         for b_idx in range(batch_size):
             labels_to_consider_arr = []
             token_log_ps_arr = []
+            full_sample_ids_arr = []
             logits_arr = []
             partial_samples_arr = []
             for call_idx in range(num_iterative_calls):
                 for chunk_idx in range(FLAGS.iterative_chunk_size):
                     labels_to_consider_arr.append(labels_to_consider[call_idx][b_idx, chunk_idx, :])
                     token_log_ps_arr.append(token_final_log_ps[call_idx][b_idx, chunk_idx, :])
+                    full_sample_ids_arr.append(full_generated_sample_ids[call_idx][b_idx, chunk_idx, :])
                     logits_arr.append(logits[call_idx][b_idx, chunk_idx, :, :])
                     partial_samples_arr.append(partial_generations[call_idx][b_idx][0][chunk_idx])
 
             final_labels_to_consider.append(labels_to_consider_arr)
             token_log_ps.append(token_log_ps_arr)
+            full_sample_ids.append(full_sample_ids_arr)
             final_logits.append(logits_arr)
             partial_samples.append(partial_samples_arr)
 
@@ -152,6 +164,7 @@ class LossCalculator:
         # Pad sequences up until max_len
         logits_flattened = []
         token_log_ps_flattened = []
+        full_sample_ids_flattened = []
         flattened_labels_to_consider = []
         for b_idx in range(batch_size):
             for sample_idx in range(FLAGS.rl_sample_size):
@@ -180,8 +193,19 @@ class LossCalculator:
                 pad_logits = torch.zeros((max_len - cur_len, vocab_size), dtype=cur_logits.dtype, device=cur_logits.device)
                 logits_flattened.append(torch.cat((cur_logits, pad_logits), dim=0))
 
+                # pad the sample ids.
+                cur_sample_ids = full_sample_ids[b_idx][sample_idx]
+                cur_len = cur_sample_ids.size()[0]
+                pad_sample_ids = torch.tensor(
+                    [self.policy_lm.tokenizer.pad_token_id] * (max_len - cur_len),
+                    dtype=cur_sample_ids.dtype,
+                    device=cur_sample_ids.device,
+                )
+                full_sample_ids_flattened.append(torch.cat((cur_sample_ids, pad_sample_ids), dim=0))
+
         final_logits = torch.stack(logits_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1, vocab_size)
         final_token_log_ps = torch.stack(token_log_ps_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
+        final_full_sample_ids = torch.stack(full_sample_ids_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
         final_labels_to_consider = torch.stack(flattened_labels_to_consider, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
 
         return_data = {
@@ -191,10 +215,51 @@ class LossCalculator:
             "labels_to_consider": final_labels_to_consider,
             "token_log_ps": final_token_log_ps,
             "logits": final_logits,
+            "final_full_sample_ids": final_full_sample_ids,
         }
 
         # We should add a padding code to here!
         return return_data
+
+    def find_reference_scores(
+        self,
+        batch: torch.utils.data.Dataset,
+        teacher_forcing_labels: torch.LongTensor,
+    ) -> Any:
+        """Compute token log likelihoods for the previous samples using a reference model."""
+        # Compute log likelihood of the reference model for the samples.
+        num_samples_per_example = FLAGS.rl_sample_size
+        input_texts = batch["texts"]
+        batch_size = len(input_texts)
+        row_ids = batch["row_ids"]
+        expanded_input_texts = list(chain.from_iterable([[text] * num_samples_per_example for text in input_texts]))
+        expanded_row_ids = list(chain.from_iterable([[row_id] * num_samples_per_example for row_id in row_ids]))
+        data = self.ref_policy_lm.prepare_text_for_inference(texts=expanded_input_texts, row_ids=expanded_row_ids)
+        dataset = DictDataset(data)
+        dataloader = DataLoader(
+            dataset,
+            shuffle=False,
+            batch_size=len(dataset),
+            num_workers=1,
+        )
+        teacher_forcing_labels = teacher_forcing_labels.to(self.ref_policy_lm.device)
+        for ref_batch in dataloader:
+            # This only happens once.
+            llm_generation_outputs: List[LLMGenerationOutput] = self.ref_policy_lm.generation_pass(
+                ref_batch,
+                top_p=FLAGS.test_top_p,
+                temperature=FLAGS.test_temperature,
+                num_return_sequences=1,
+                to_train=False,
+                use_cache=True,
+                per_step_scores=True,
+                iterative_rl_sampling=False,
+                generate_partial_sequences=False,
+                teacher_forcing_labels=teacher_forcing_labels,
+            )
+            token_final_log_ps = llm_generation_outputs[0].token_final_log_ps.view(batch_size, num_samples_per_example, -1)
+
+        return token_final_log_ps
 
     def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = False) -> torch.Tensor:
         """Use reinforce with per-step to compute the loss."""
@@ -209,6 +274,13 @@ class LossCalculator:
         )
         per_step_rewards = torch.tensor(per_step_rewards, dtype=torch.float64, device=self.policy_lm.device)
         masks = sample_data["labels_to_consider"] != -100
+        if FLAGS.include_policy_ref_kl:
+            ref_token_log_ps = self.find_reference_scores(batch, sample_data["final_full_sample_ids"])
+            print(ref_token_log_ps.size())
+            print(sample_data["token_log_ps"].size())
+            print(ref_token_log_ps)
+            print("saeed")
+
         if terminal_reward_only:
             returns = per_step_rewards
             normalized_returns = normalize_signals(returns, normalization_type=FLAGS.reward_normalization_type)

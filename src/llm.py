@@ -64,6 +64,7 @@ _LLAMA32_EXTRA_TOKENS = {
 @dataclass
 class LLMGenerationOutput:
     predictions_str: List[str] = field(default_factory=list)
+    full_generated_sample_ids: torch.LongTensor = None
     final_log_ps: torch.FloatTensor = None
     token_final_log_ps: torch.FloatTensor = None
     actual_lens: torch.LongTensor = None
@@ -389,6 +390,7 @@ class LLM(torch.nn.Module):
             )
             actual_lens = torch.sum(torch.where(labels_to_consider > 0, 1, 0), dim=1)
             llm_generation_output = LLMGenerationOutput(
+                full_generated_sample_ids=selected_samples,
                 predictions_str=predictions_str,
                 final_log_ps=final_log_ps,
                 token_final_log_ps=token_final_log_ps,
@@ -402,7 +404,9 @@ class LLM(torch.nn.Module):
                 logits=logits, labels=labels_to_consider, loss_func=self.model.loss_func, per_step_scores=False
             )
             llm_generation_output = LLMGenerationOutput(
-                predictions_str=predictions_str, final_log_ps=final_log_ps / actual_lens
+                predictions_str=predictions_str,
+                final_log_ps=final_log_ps / actual_lens,
+                full_generated_sample_ids=selected_samples,
             )
 
         if generate_partial_sequences:
