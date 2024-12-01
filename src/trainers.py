@@ -74,9 +74,7 @@ class LossCalculator:
         else:
             raise ValueError("--compute_true_validation_loss should be true!")
 
-    def sample_and_generate_details(
-        self, batch: torch.utils.data.Dataset, teacher_forcing_labels: Optional[torch.Tensor] = None, to_train: bool = True
-    ) -> Any:
+    def sample_and_generate_details(self, batch: torch.utils.data.Dataset, to_train: bool = True) -> Any:
         """Compute per-step information while sampling.
 
         We can also give prior labels which will compute the logits of
@@ -102,7 +100,6 @@ class LossCalculator:
                 per_step_scores=True,
                 iterative_rl_sampling=False,
                 generate_partial_sequences=True,
-                teacher_forcing_labels=teacher_forcing_labels,
             )
             final_log_ps_per_call = llm_generation_outputs[0].final_log_ps
             actual_lens_per_call = llm_generation_outputs[0].actual_lens

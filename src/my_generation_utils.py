@@ -658,11 +658,6 @@ class MyGenerationMixin(GenerationMixin):
                     is_encoder_decoder=self.config.is_encoder_decoder,
                     **model_kwargs,
                 )
-                # Also expand the teacher forcing labels.
-                if teacher_forcing_labels is not None:
-                    teacher_forcing_labels = teacher_forcing_labels.repeat_interleave(
-                        generation_config.num_return_sequences, dim=0
-                    )
 
                 # 12. run sample (it degenerates to greedy search when `generation_config.do_sample=False`)
                 result = self._sample(
@@ -907,6 +902,7 @@ class MyGenerationMixin(GenerationMixin):
 
         # keep track of which sequences are already finished
         batch_size, cur_len = input_ids.shape
+        original_len = cur_len
         this_peer_finished = False
         unfinished_sequences = torch.ones(batch_size, dtype=torch.long, device=input_ids.device)
         model_kwargs = self._get_initial_cache_position(input_ids, model_kwargs)
@@ -971,7 +967,7 @@ class MyGenerationMixin(GenerationMixin):
             # If teacher forcing is enabled, then we stop sampling and only
             # pick the tokens provided by the teacher-forcing tensor.
             if teacher_forcing_labels is not None:
-                next_tokens = teacher_forcing_labels[:, cur_len]
+                next_tokens = teacher_forcing_labels[:, cur_len - original_len]
             else:
                 # token selection
                 if do_sample:
