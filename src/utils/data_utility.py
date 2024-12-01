@@ -74,7 +74,7 @@ def process_squadv2_dataset(
         if experiment_type in ["normal_no_icl", "normal_with_icl"]:
             user_final_message = f"Passage: {context}"
             user_final_message += f"\nQuestion: {question}"
-            user_final_message += "\nFinal Answer: "
+            # user_final_message += "\nFinal Answer: "
         elif experiment_type in ["explanation_no_icl", "explanation_with_icl"]:
             user_final_message = f"Passage: {context}"
             user_final_message += f"\nQuestion: {question}"
@@ -89,7 +89,8 @@ def process_squadv2_dataset(
         gold_answer = random.choice(gold_answers)
         if experiment_type == "normal_no_icl":
             # Right now, this is only valid for fine-tuning.
-            squad_output = output_template.format(output=f"Final Answer: {gold_answer}")
+            # squad_output = output_template.format(output=f"Final Answer: {gold_answer}")
+            squad_output = output_template.format(output=f"{gold_answer}")
             squad_outputs.append(squad_output)
 
     return squad_inputs, squad_ids, squad_outputs, gold_outputs

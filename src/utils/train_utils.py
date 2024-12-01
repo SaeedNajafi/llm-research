@@ -508,17 +508,26 @@ def evaluation(
             wandb_run.log(log_data, commit=False)
 
     dist.barrier()
-    return EvaluationOutput(
-        eval_prediction_ppl=eval_prediction_ppl,
-        eval_epoch_prediction_loss=eval_epoch_prediction_loss,
-        val_step_prediction_losses=val_step_prediction_losses,
-        val_step_prediction_perplexities=val_step_prediction_perplexities,
-        eval_true_ppl=eval_true_ppl,
-        eval_epoch_true_loss=eval_epoch_true_loss,
-        val_step_true_losses=val_step_true_losses,
-        val_step_true_perplexities=val_step_true_perplexities,
-        float_val_scores=float_val_scores,
-    )
+    if FLAGS.compute_true_validation_loss:
+        return EvaluationOutput(
+            eval_prediction_ppl=eval_prediction_ppl,
+            eval_epoch_prediction_loss=eval_epoch_prediction_loss,
+            val_step_prediction_losses=val_step_prediction_losses,
+            val_step_prediction_perplexities=val_step_prediction_perplexities,
+            eval_true_ppl=eval_true_ppl,
+            eval_epoch_true_loss=eval_epoch_true_loss,
+            val_step_true_losses=val_step_true_losses,
+            val_step_true_perplexities=val_step_true_perplexities,
+            float_val_scores=float_val_scores,
+        )
+    else:
+        return EvaluationOutput(
+            eval_prediction_ppl=eval_prediction_ppl,
+            eval_epoch_prediction_loss=eval_epoch_prediction_loss,
+            val_step_prediction_losses=val_step_prediction_losses,
+            val_step_prediction_perplexities=val_step_prediction_perplexities,
+            float_val_scores=float_val_scores,
+        )
 
 
 def setup() -> None:

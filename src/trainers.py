@@ -74,9 +74,7 @@ class LossCalculator:
         else:
             raise ValueError("--compute_true_validation_loss should be true!")
 
-    def sample_and_generate_details(
-        self, batch: torch.utils.data.Dataset, teacher_forcing_labels: Optional[torch.Tensor] = None, to_train: bool = True
-    ) -> Any:
+    def sample_and_generate_details(self, batch: torch.utils.data.Dataset, to_train: bool = True) -> Any:
         """Compute per-step information while sampling.
 
         We can also give prior labels which will compute the logits of
@@ -102,7 +100,6 @@ class LossCalculator:
                 per_step_scores=True,
                 iterative_rl_sampling=False,
                 generate_partial_sequences=True,
-                teacher_forcing_labels=teacher_forcing_labels,
             )
             final_log_ps_per_call = llm_generation_outputs[0].final_log_ps
             actual_lens_per_call = llm_generation_outputs[0].actual_lens
@@ -206,8 +203,8 @@ class LossCalculator:
         per_step_rewards = self.reward_calculator.compute_per_step_rewards(
             gold_answers,
             sample_data["partial_samples"],
-            # output_template=self.policy_lm.output_template,
-            # templated_rewards=True,
+            output_template=self.policy_lm.output_template,
+            templated_rewards=True,
             terminal_reward_only=terminal_reward_only,
         )
         per_step_rewards = torch.tensor(per_step_rewards, dtype=torch.float64, device=self.policy_lm.device)
@@ -230,7 +227,7 @@ class LossCalculator:
                 seq_log_ps = torch.sum(sample_data["token_log_ps"] * torch.where(masks, 1, 0), dim=2)
                 loss = -torch.mean(
                     torch.mean(
-                        seq_log_ps * normalized_returns_after_baselines,
+                        seq_log_ps * normalized_returns_after_baselines.squeeze(-1),
                         dim=1,
                     ),
                     dim=0,
@@ -401,8 +398,10 @@ class LossCalculator:
         elif self.objective_type == "iterative_finetuning":
             return self.maximum_marginal_likelihood_loss(batch, iterative_finetuning=True)
 
-        elif self.objective_type == "reinforce_terminal_reward":
-            # return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward=True)
+        elif self.objective_type == "reinforce_terminal_reward_version_1":
+            return self.maximum_marginal_likelihood_loss(batch, reinforce_terminal_reward=True)
+
+        elif self.objective_type == "reinforce_terminal_reward_version_2":
             return self.reinforce_loss(batch, terminal_reward_only=True)
 
         elif self.objective_type == "mml_iterative_reinforce":
