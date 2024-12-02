@@ -67,8 +67,8 @@ if [ "${RUN_MODE}" = "tuning" ]; then
                                 --run_name ${RUN_NAME} \
                                 --compute_true_validation_loss=false \
                                 --max_eval_step=256 \
-                                --num_epochs=2 \
-                                --t_0=2 > ${LOG_PATH} 2>&1"
+                                --num_epochs=3 \
+                                --t_0=3 > ${LOG_PATH} 2>&1"
 
 else
         srun -N "${SLURM_NNODES}" -l \

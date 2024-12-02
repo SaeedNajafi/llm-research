@@ -205,7 +205,7 @@ class LossCalculator:
 
         final_logits = torch.stack(logits_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1, vocab_size)
         final_token_log_ps = torch.stack(token_log_ps_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
-        final_full_sample_ids = torch.stack(full_sample_ids_flattened, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
+        final_full_sample_ids = torch.stack(full_sample_ids_flattened, dim=0).view(batch_size * FLAGS.rl_sample_size, -1)
         final_labels_to_consider = torch.stack(flattened_labels_to_consider, dim=0).view(batch_size, FLAGS.rl_sample_size, -1)
 
         return_data = {
@@ -276,10 +276,12 @@ class LossCalculator:
         masks = sample_data["labels_to_consider"] != -100
         if FLAGS.include_policy_ref_kl:
             ref_token_log_ps = self.find_reference_scores(batch, sample_data["final_full_sample_ids"])
-            print(ref_token_log_ps.size())
-            print(sample_data["token_log_ps"].size())
-            print(ref_token_log_ps)
-            print("saeed")
+            if terminal_reward_only:
+                per_step_rewards += FLAGS.policy_ref_kl_coef * torch.sum(
+                    ref_token_log_ps.to(self.policy_lm.device), dim=2, keepdim=True
+                )
+            else:
+                per_step_rewards += FLAGS.policy_ref_kl_coef * ref_token_log_ps.to(self.policy_lm.device)
 
         if terminal_reward_only:
             returns = per_step_rewards
