@@ -18,6 +18,8 @@ GRADIENT_ACCUMULATION_STEPS=$8
 LR=$9
 LR_MIN=${10}
 RUN_NAME=${11}
+TEMP=${12}
+TOP_P=${13}
 
 
 
@@ -68,6 +70,8 @@ if [ "${RUN_MODE}" = "tuning" ]; then
                                 --compute_true_validation_loss=false \
                                 --max_eval_step=256 \
                                 --num_epochs=3 \
+                                --train_top_p=${TOP_P} \
+                                --train_temperature=${TEMP} \
                                 --t_0=3 > ${LOG_PATH} 2>&1"
 
 else

@@ -1,19 +1,17 @@
 #!/bin/bash
 
 main_path="/scratch/ssd004/scratch/snajafi/vector-backup/rl-exps-november/squadv2_1024_13"
-gradient_accumulation_steps=(1 2 4 8 16 32)
-lrs=(0.00001 0.00005 0.0001)
-lr_mins=(0.000001 0.000005 0.00001)
+top_ps=(0.975 0.95 0.925 0.9 0.875 0.85)
+temperatures=(2.0 1.75 1.5 1.25 1.0 0.75 0.5 0.25 0.0001)
 
 
-for g_step_i in ${!gradient_accumulation_steps[@]};
+for top_p_i in ${!top_ps[@]};
 do
-    g_step=${gradient_accumulation_steps[$g_step_i]}
-    for lr_i in ${!lrs[@]};
+    top_p=${top_ps[$top_p_i]}
+    for temp_i in ${!temperatures[@]};
     do
-        lr=${lrs[$lr_i]}
-        lr_min=${lr_mins[$lr_i]}
-        run_name=reinforce_per_step_samplesize_8-gradient_accu_steps_${g_step}-lr_${lr}
+        temp=${temperatures[$temp_i]}
+        run_name=mml_version_1_samplesize_8-gradient_accu_steps_${g_step}-lr_${lr}-top_p-${top_P}-temp-${temp}
         checkpoint_folder=${main_path}/${run_name}
         prediction_file=${checkpoint_folder}/internal_validation_prediction_squadv2.csv
         bash job_submission/launch.sh \
@@ -30,13 +28,15 @@ do
             MEM_PER_CPU=3 \
             SCRIPT=src/squadv2_finetuning.py \
             LOG_DIR=training_logs \
-            CONFIG_FILE=configs/vector/llama3.2_reinforce_squadv2_13_1024_lora_flags.txt \
+            CONFIG_FILE=configs/vector/llama3.2_mml_squadv2_13_1024_lora_flags.txt \
             CHECKPOINT_FOLDER=${checkpoint_folder} \
             PREDICTION_FILE=${prediction_file} \
-            GRADIENT_ACCUMULATION_STEPS=${g_step} \
-            LR=${lr} \
-            LR_MIN=${lr_min} \
             RUN_NAME=${run_name} \
+            TEMP=${temp} \
+            TOP_P=${top_p} \
+            GRADIENT_ACCUMULATION_STEPS=16 \
+            LR=0.00005 \
+            LR_MIN=0.000005 \
             RUN_MODE=tuning
     done
 done

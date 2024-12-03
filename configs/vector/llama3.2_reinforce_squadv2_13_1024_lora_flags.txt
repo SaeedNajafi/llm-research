@@ -13,11 +13,11 @@
 --use_activation_checkpointing
 --sharding_strategy=FULL_SHARD
 --use_profiler=false
---max_train_step=128
---max_eval_step=64
+--max_train_step=0
+--max_eval_step=0
 --num_epochs=5
 --steps_before_evaluation=32
---gradient_accumulation_steps=32
+--gradient_accumulation_steps=2
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation
@@ -39,7 +39,7 @@
 --weight_decay=0.001
 --mode=train
 --seed=13
---project_name=llm_rl_research_testing
+--project_name=llm_rl_research_v2_vector
 --group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
 --run_name=testing_samplesize_8-with-ref-kl
 --experiment_type=normal_no_icl
@@ -50,4 +50,4 @@
 --rl_sample_size=8
 --iterative_chunk_size=4
 --reward_normalization_type=linear
---include_policy_ref_kl
+--include_policy_ref_kl=false

@@ -25,7 +25,7 @@ if [ "${LAUNCH_MODE}" = "train" ]; then
                 ${CURR_DIR}/job_submission/train.slrm ${CURR_DIR}/${SCRIPT} \
                 ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR} ${NPROC_PER_NODE} \
                 ${RUN_MODE} ${CHECKPOINT_FOLDER} ${PREDICTION_FILE} \
-                ${GRADIENT_ACCUMULATION_STEPS} ${LR} ${LR_MIN} ${RUN_NAME}
+                ${GRADIENT_ACCUMULATION_STEPS} ${LR} ${LR_MIN} ${RUN_NAME} ${TEMP} ${TOP_P}
         else
             ${COMMAND} --account ${ACCOUNT} \
                 --nodes ${NNODES} \
@@ -49,7 +49,7 @@ if [ "${LAUNCH_MODE}" = "train" ]; then
                 ${CURR_DIR}/job_submission/train.slrm ${CURR_DIR}/${SCRIPT} \
                 ${CURR_DIR}/${CONFIG_FILE} ${CURR_DIR}/${LOG_DIR} ${NPROC_PER_NODE} \
                 ${RUN_MODE} ${CHECKPOINT_FOLDER} ${PREDICTION_FILE} \
-                ${GRADIENT_ACCUMULATION_STEPS} ${LR} ${LR_MIN} ${RUN_NAME}
+                ${GRADIENT_ACCUMULATION_STEPS} ${LR} ${LR_MIN} ${RUN_NAME} ${TEMP} ${TOP_P}
         else
             ${COMMAND} --nodes ${NNODES} \
                 --gpus-per-node ${GPUS_PER_NODE} \
