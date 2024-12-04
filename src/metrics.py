@@ -240,6 +240,7 @@ def normalize_answer(text: str) -> str:
 def get_tokens(text: str, no_removal: bool = False) -> List[str]:
     if not text:
         return []
+    text = str(text)  # make sure it is not a float and is a string.
     text = text.replace(">assistant<", "> assistant <")
     text = text.replace(">assistant", "> assistant")
     text = text.replace(">\n\n", "> \n\n")

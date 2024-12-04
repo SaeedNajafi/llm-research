@@ -1,0 +1,1 @@
+NPROC_PER_NODE=4 CUDA_VISIBLE_DEVICES="0,1,2,3" TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun --nproc-per-node=4 --nnodes=1 --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT --rdzv-id $RDVZ_ID --rdzv-backend c10d codes/llm-research/src/squadv2_finetuning.py --flagfile codes/llm-research/configs/h100/llama3.2_mml_squadv2_13_1024_lora_flags.txt > codes/logs/mml_run_logs.txt 2>&1

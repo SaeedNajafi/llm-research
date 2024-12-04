@@ -1,7 +1,7 @@
 --dev_file=/home/saeed/datasets/1024-shot-datasets/squad/1024-13-dev.tsv
 --train_file=/home/saeed/datasets/1024-shot-datasets/squad/1024-13-train.tsv
---checkpoint_folder=/home/saeed/checkpoints/rl-dpo-mml-exps-december/squadv2_1024_13/mml_version_1_batch_64_top_p_0.95_temp_1.0_lr_5e-5
---prediction_file=/home/saeed/checkpoints/rl-dpo-mml-exps-december/squadv2_1024_13/mml_version_1_batch_64_top_p_0.95_temp_1.0_lr_5e-5/internal_validation_prediction_squadv2.csv
+--checkpoint_folder=/home/saeed/checkpoints/rl-dpo-mml-exps-december/squadv2_1024_13/reinforce_terminal_version_1_batch_64_top_p_0.95_temp_1.0_lr_5e-5
+--prediction_file=/home/saeed/checkpoints/rl-dpo-mml-exps-december/squadv2_1024_13/reinforce_terminal_version_1_batch_64_top_p_0.95_temp_1.0_lr_5e-5/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -41,12 +41,11 @@
 --seed=13
 --project_name=llm_rl_research_h100
 --group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
---run_name=mml_version_1_samplesize_8-batch_size_64-lr_0.00005-top_p_0.95-temp_1.0
+--run_name=reinforce_terminal_version_1_samplesize_8-batch_size_64-lr_0.00005-top_p_0.95-temp_1.0
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=64
 --ddp
---objective_type=mml
---mml_version=version_1
+--objective_type=reinforce_terminal_reward_version_1
 --rl_sample_size=8
 --iterative_chunk_size=8
