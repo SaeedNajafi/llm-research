@@ -48,4 +48,4 @@
 --ddp
 --objective_type=iterative_finetuning
 --rl_sample_size=8
---iterative_chunk_size=8
+--iterative_chunk_size=4

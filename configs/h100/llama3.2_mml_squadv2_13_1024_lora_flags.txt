@@ -49,4 +49,4 @@
 --objective_type=mml
 --mml_version=version_1
 --rl_sample_size=8
---iterative_chunk_size=8
+--iterative_chunk_size=4
