@@ -1,6 +1,6 @@
 #!/bin/bash
 
-main_path="/scratch/ssd004/scratch/snajafi/vector-backup/rl-exps-november/squadv2_1024_13"
+main_path="/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13"
 top_ps=(0.975 0.95 0.925 0.9 0.875 0.85)
 temperatures=(2.0 1.75 1.5 1.25 1.0 0.75 0.5 0.25 0.0001)
 
@@ -11,7 +11,7 @@ do
     for temp_i in ${!temperatures[@]};
     do
         temp=${temperatures[$temp_i]}
-        run_name=mml_version_1_samplesize_8-gradient_accu_steps_${g_step}-lr_${lr}-top_p-${top_P}-temp-${temp}
+        run_name=mml_version_1_samplesize_8-gradient_accu_steps_16-lr_0.00005-top_p-${top_p}-temp-${temp}
         checkpoint_folder=${main_path}/${run_name}
         prediction_file=${checkpoint_folder}/internal_validation_prediction_squadv2.csv
         bash job_submission/launch.sh \

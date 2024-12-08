@@ -1,7 +1,7 @@
---dev_file=/h/snajafi/llm-research/data/1024-shot-datasets/squad/1024-13-dev.tsv
---train_file=/h/snajafi/llm-research/data/1024-shot-datasets/squad/1024-13-train.tsv
---checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl-exps-november/squadv2_1024_13/mml_version_1_batch_64
---prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl-exps-november/squadv2_1024_13/mml_version_1_batch_64/internal_validation_prediction_squadv2.csv
+--dev_file=/scratch/ssd004/scratch/snajafi/datasets/1024-shot-datasets/squad/1024-13-dev.tsv
+--train_file=/scratch/ssd004/scratch/snajafi/datasets/1024-shot-datasets/squad/1024-13-train.tsv
+--checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13/mml_version_1_batch_64
+--prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13/mml_version_1_batch_64/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -21,7 +21,7 @@
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation
---compute_true_validation_loss
+--compute_true_validation_loss=false
 --metric_type=squadv2_metrics_f1
 --checkpoint_on_metric=squadv2_metrics_f1
 --base_llm_id=Llama-3.2-1B-Instruct
@@ -39,7 +39,7 @@
 --weight_decay=0.001
 --mode=train
 --seed=13
---project_name=llm_rl_research_v2_vector
+--project_name=llm_rl_research_v3_vector
 --group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
 --run_name=mml_version_1_samplesize_8-gradient_accu_steps_16-lr_0.00005
 --experiment_type=normal_no_icl

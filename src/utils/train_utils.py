@@ -353,7 +353,7 @@ def train(
             val_scores,
         )
 
-    avg_epoch_time = sum(epoch_times) / len(epoch_times)
+    avg_epoch_time = sum(epoch_times) / (len(epoch_times) + 1e-5)
     avg_checkpoint_time = sum(checkpoint_times) / len(checkpoint_times) if len(checkpoint_times) > 0 else 0
     avg_train_perplexity = sum(train_perplexities) / len(train_perplexities)
     avg_train_loss = sum(train_losses) / len(train_losses)
