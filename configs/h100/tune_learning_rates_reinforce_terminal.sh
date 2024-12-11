@@ -18,7 +18,7 @@ do
         lr=${lrs[$lr_i]}
         lr_min=${lr_mins[$lr_i]}
         run_name="reinforce_terminal_version_1_samplesize_8-gradient_accu_steps_${g_step}-lr_${lr}-top_p_0.95-temp_1.0"
-        NPROC_PER_NODE=8 CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7" TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun --nproc-per-node=8 \
+        NPROC_PER_NODE=3 CUDA_VISIBLE_DEVICES="4,5,6" TOKENIZERS_PARALLELISM=false WANDB_MODE=offline torchrun --nproc-per-node=3 \
             --nnodes=1 \
             --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT \
             --rdzv-id $RDVZ_ID \
