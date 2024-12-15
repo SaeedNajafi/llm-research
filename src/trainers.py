@@ -353,29 +353,99 @@ class LossCalculator:
 
     def preference_optimization_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
         """Use preference optimization to compute the loss."""
-        sample_data = self.sample_and_generate_details(batch)
+        assert FLAGS.rl_sample_size > 1
+        num_iterative_calls = FLAGS.rl_sample_size // FLAGS.iterative_chunk_size
+        generations = []
+        final_log_ps = []
+        full_generated_sample_ids = []
+        for call_idx in range(num_iterative_calls):
+            llm_generation_outputs: List[LLMGenerationOutput] = self.policy_lm.generation_pass(
+                batch,
+                top_p=FLAGS.train_top_p,
+                temperature=FLAGS.train_temperature,
+                num_return_sequences=FLAGS.iterative_chunk_size,
+                to_train=True,
+                use_cache=True,
+                per_step_scores=False,
+                iterative_rl_sampling=False,
+            )
+            generations_per_call = llm_generation_outputs[0].predictions_str
+            final_log_ps_per_call = llm_generation_outputs[0].final_log_ps
+            full_generated_sample_ids_per_call = llm_generation_outputs[0].full_generated_sample_ids
+            batch_generations_per_call = []
+            batch_size = len(generations_per_call) // FLAGS.iterative_chunk_size
+            for b_idx in range(batch_size):
+                batch_generations_per_call.append(
+                    [generations_per_call[b_idx * FLAGS.iterative_chunk_size : (b_idx + 1) * FLAGS.iterative_chunk_size]]
+                )
+            final_log_ps.append(final_log_ps_per_call.view(batch_size, FLAGS.iterative_chunk_size))
+            generations.append(batch_generations_per_call)
+            full_generated_sample_ids.append(
+                full_generated_sample_ids_per_call.view(batch_size, FLAGS.iterative_chunk_size, -1)
+            )
+
+        sequence_log_probs = torch.cat(final_log_ps, dim=1)
+        batch_size = sequence_log_probs.size()[0]
+        # Compute the rewards.
         gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
-        sample_rewards = self.reward_calculator.compute_per_step_rewards(
-            gold_answers,
-            sample_data["partial_samples"],
-            output_template=self.policy_lm.output_template,
-            templated_rewards=True,
-            terminal_reward_only=True,
+        samples = []
+        full_sample_ids = []
+        for b_idx in range(batch_size):
+            sample_arr = []
+            full_sample_ids_arr = []
+            for call_idx in range(num_iterative_calls):
+                samples_strings = generations[call_idx][b_idx][0]
+                sample_arr.extend(samples_strings)
+                for chunk_idx in range(FLAGS.iterative_chunk_size):
+                    full_sample_ids_arr.append(full_generated_sample_ids[call_idx][b_idx, chunk_idx, :])
+
+            # Add extra third dimension.
+            sample_arr_extended = [[each] for each in sample_arr]
+            samples.append(sample_arr_extended)
+            full_sample_ids.append(full_sample_ids_arr)
+
+        full_sample_ids_flattened = []
+        # Find max len for padding.
+        max_len = 0
+        for b_idx in range(batch_size):
+            for sample_idx in range(FLAGS.rl_sample_size):
+                # pad the sample ids.
+                cur_sample_ids = full_sample_ids[b_idx][sample_idx]
+                cur_len = cur_sample_ids.size()[0]
+                if cur_len > max_len:
+                    max_len = cur_len
+
+        for b_idx in range(batch_size):
+            for sample_idx in range(FLAGS.rl_sample_size):
+                # pad the sample ids.
+                cur_sample_ids = full_sample_ids[b_idx][sample_idx]
+                cur_len = cur_sample_ids.size()[0]
+                pad_sample_ids = torch.tensor(
+                    [self.policy_lm.tokenizer.pad_token_id] * (max_len - cur_len),
+                    dtype=cur_sample_ids.dtype,
+                    device=cur_sample_ids.device,
+                )
+                full_sample_ids_flattened.append(torch.cat((cur_sample_ids, pad_sample_ids), dim=0))
+
+        final_full_sample_ids = torch.stack(full_sample_ids_flattened, dim=0).view(batch_size * FLAGS.rl_sample_size, -1)
+        sample_scores = self.reward_calculator.compute_per_step_rewards(
+            gold_answers, partial_outputs=samples, terminal_reward_only=True
         )
-        sample_scores = torch.tensor(sample_rewards, dtype=torch.float64, device=self.policy_lm.device)
-        normalized_sample_scores = normalize_signals(sample_scores, normalization_type=FLAGS.reward_normalization_type)
-        normalized_sample_scores = normalized_sample_scores.squeeze(2)
-        max_values, max_indices = torch.max(normalized_sample_scores, dim=1, keepdim=True)
-        min_values, min_indices = torch.min(normalized_sample_scores, dim=1, keepdim=True)
+        sample_scores_tensor = torch.tensor(sample_scores, dtype=torch.float64, device=self.policy_lm.device)
+        sample_scores_tensor = sample_scores_tensor.view(batch_size, FLAGS.rl_sample_size)
+
+        # Making sure to be between zero and one.
+        normalized_scores = normalize_signals(sample_scores_tensor, normalization_type="linear")
+        max_values, max_indices = torch.max(normalized_scores, dim=1, keepdim=True)
+        min_values, min_indices = torch.min(normalized_scores, dim=1, keepdim=True)
 
         # Accept or reject the samples.
-        sequence_log_ps = sample_data["sequence_log_probs"]
-        reward_chosen_log_probs = torch.gather(sequence_log_ps, dim=1, index=max_indices)
-        reward_rejected_log_probs = torch.gather(sequence_log_ps, dim=1, index=min_indices)
+        reward_chosen_log_probs = torch.gather(sequence_log_probs, dim=1, index=max_indices)
+        reward_rejected_log_probs = torch.gather(sequence_log_probs, dim=1, index=min_indices)
 
         reference_free = True
         if FLAGS.preference_optimization_with_reference:
-            ref_sequence_log_ps, _ = self.find_reference_scores(batch, sample_data["final_full_sample_ids"])
+            ref_sequence_log_ps, _ = self.find_reference_scores(batch, final_full_sample_ids)
             reward_chosen_ref_log_probs = torch.gather(ref_sequence_log_ps, dim=1, index=max_indices)
             reward_rejected_ref_log_probs = torch.gather(ref_sequence_log_ps, dim=1, index=min_indices)
             reference_free = False

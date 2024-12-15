@@ -1,7 +1,7 @@
---dev_file=/scratch/ssd004/scratch/snajafi/datasets/1024-shot-datasets/squad/1024-42-dev.tsv
---train_file=/scratch/ssd004/scratch/snajafi/datasets/1024-shot-datasets/squad/1024-42-train.tsv
---checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13/reinforce_terminal_reward_version1_seed42
---prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13/reinforce_terminal_reward_version1_seed42/internal_validation_prediction_squadv2.csv
+--dev_file=/scratch/ssd004/scratch/snajafi/datasets/1024-shot-datasets/squad/1024-13-dev.tsv
+--train_file=/scratch/ssd004/scratch/snajafi/datasets/1024-shot-datasets/squad/1024-13-train.tsv
+--checkpoint_folder=/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13/reinforce_terminal_reward_version1_seed13_gstep_8
+--prediction_file=/scratch/ssd004/scratch/snajafi/vector-backup/rl-dpo-mml-exps-december/squadv2_1024_13/reinforce_terminal_reward_version1_seed13_gstep_8/internal_validation_prediction_squadv2.csv
 --r=64
 --lora_alpha=64
 --lora_dropout=0.1
@@ -17,7 +17,7 @@
 --max_eval_step=0
 --num_epochs=10
 --steps_before_evaluation=32
---gradient_accumulation_steps=16
+--gradient_accumulation_steps=8
 --gradient_clipping
 --gradient_clipping_threshold=1.0
 --run_validation
@@ -38,10 +38,10 @@
 --lr_min=5e-6
 --weight_decay=0.001
 --mode=train
---seed=42
+--seed=13
 --project_name=llm_rl_research_v3_vector
 --group_name=squadv2_rl_13_1024_Llama3.2-1B-Instruct-Lora64
---run_name=reinforce_terminal_version_1_samplesize_8-gradient_accu_steps_16-lr_0.00005-seed42-train_top_p_0.975-temp_1.0
+--run_name=reinforce_terminal_version_1_samplesize_8-gradient_accu_steps_8-lr_0.00005-seed13-train_top_p_0.975-temp_1.0
 --experiment_type=normal_no_icl
 --train_batch_size=1
 --eval_batch_size=4
