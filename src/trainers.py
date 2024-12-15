@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 from src.llm import LLM, LLMGenerationOutput
 from src.metrics import RewardCalculator
+from src.utils.dpo_utils import preference_loss
 from src.utils.general_utils import DictDataset
 from src.utils.rl_utils import compute_entropy_loss, form_returns, normalize_signals
 
@@ -34,6 +35,10 @@ flags.DEFINE_float(
     "policy_ref_kl_coef", 0.1, "Coefficient to apply the KL divergence between the policy and the reference policy."
 )
 flags.DEFINE_boolean("compute_true_validation_loss", True, "True or False?")
+flags.DEFINE_boolean("preference_optimization_with_reference", False, "True or False? reference free DPO/IPO or not?")
+flags.DEFINE_float("preference_beta", 0.1, "beta in DPO/IPO loss.")
+flags.DEFINE_boolean("preference_ipo", False, "Whether to use the IPO version of preference optimization.")
+flags.DEFINE_float("preference_label_smoothing", 0.1, "label smoothing used for conservative DPO/IPO.")
 
 
 class LossCalculator:
@@ -258,8 +263,9 @@ class LossCalculator:
                 teacher_forcing_labels=teacher_forcing_labels,
             )
             token_final_log_ps = llm_generation_outputs[0].token_final_log_ps.view(batch_size, num_samples_per_example, -1)
+            sequence_log_ps = llm_generation_outputs[0].final_log_ps.view(batch_size, num_samples_per_example)
 
-        return token_final_log_ps
+        return sequence_log_ps, token_final_log_ps
 
     def reinforce_loss(self, batch: torch.utils.data.Dataset, terminal_reward_only: bool = False) -> torch.Tensor:
         """Use reinforce with per-step to compute the loss."""
@@ -275,7 +281,7 @@ class LossCalculator:
         per_step_rewards = torch.tensor(per_step_rewards, dtype=torch.float64, device=self.policy_lm.device)
         masks = sample_data["labels_to_consider"] != -100
         if FLAGS.include_policy_ref_kl:
-            ref_token_log_ps = self.find_reference_scores(batch, sample_data["final_full_sample_ids"])
+            _, ref_token_log_ps = self.find_reference_scores(batch, sample_data["final_full_sample_ids"])
             if terminal_reward_only:
                 per_step_rewards += FLAGS.policy_ref_kl_coef * torch.sum(
                     ref_token_log_ps.to(self.policy_lm.device), dim=2, keepdim=True
@@ -344,6 +350,47 @@ class LossCalculator:
             loss += coefficient * entropy_loss
 
         return loss
+
+    def preference_optimization_loss(self, batch: torch.utils.data.Dataset) -> torch.Tensor:
+        """Use preference optimization to compute the loss."""
+        sample_data = self.sample_and_generate_details(batch)
+        gold_answers = [[answ] * FLAGS.rl_sample_size for answ in batch["gold_answers"]]
+        sample_rewards = self.reward_calculator.compute_per_step_rewards(
+            gold_answers,
+            sample_data["partial_samples"],
+            output_template=self.policy_lm.output_template,
+            templated_rewards=True,
+            terminal_reward_only=True,
+        )
+        sample_scores = torch.tensor(sample_rewards, dtype=torch.float64, device=self.policy_lm.device)
+        normalized_sample_scores = normalize_signals(sample_scores, normalization_type=FLAGS.reward_normalization_type)
+        normalized_sample_scores = normalized_sample_scores.squeeze(2)
+        max_values, max_indices = torch.max(normalized_sample_scores, dim=1, keepdim=True)
+        min_values, min_indices = torch.min(normalized_sample_scores, dim=1, keepdim=True)
+
+        # Accept or reject the samples.
+        sequence_log_ps = sample_data["sequence_log_probs"]
+        reward_chosen_log_probs = torch.gather(sequence_log_ps, dim=1, index=max_indices)
+        reward_rejected_log_probs = torch.gather(sequence_log_ps, dim=1, index=min_indices)
+
+        reference_free = True
+        if FLAGS.preference_optimization_with_reference:
+            ref_sequence_log_ps, _ = self.find_reference_scores(batch, sample_data["final_full_sample_ids"])
+            reward_chosen_ref_log_probs = torch.gather(ref_sequence_log_ps, dim=1, index=max_indices)
+            reward_rejected_ref_log_probs = torch.gather(ref_sequence_log_ps, dim=1, index=min_indices)
+            reference_free = False
+
+        preference_losses = preference_loss(
+            policy_chosen_logps=reward_chosen_log_probs,
+            policy_rejected_logps=reward_rejected_log_probs,
+            beta=FLAGS.preference_beta,
+            label_smoothing=FLAGS.preference_label_smoothing,
+            ipo=FLAGS.preference_ipo,
+            reference_free=reference_free,
+            reference_chosen_logps=reward_chosen_ref_log_probs if not reference_free else None,
+            reference_rejected_logps=reward_rejected_ref_log_probs if not reference_free else None,
+        )
+        return torch.mean(preference_losses)
 
     def maximum_marginal_likelihood_loss(
         self,
@@ -483,6 +530,9 @@ class LossCalculator:
 
         elif self.objective_type == "reinforce":
             return self.reinforce_loss(batch)
+
+        elif self.objective_type == "preference_optimization":
+            return self.preference_optimization_loss(batch)
 
         # elif self.objective_type == "teacher_forcing_reinforce":
         #     return self.reinforce_loss(batch) + self.teacher_forcing_loss(batch)

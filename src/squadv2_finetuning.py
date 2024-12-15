@@ -68,25 +68,26 @@ def main(argv: Any) -> None:
     if rank == 0:
         wandb_run = setup_wandb()
 
+    load_ref_model = FLAGS.include_policy_ref_kl or FLAGS.preference_optimization_with_reference
     # Initialize the model here.
     if FLAGS.llm_name == "gemma2":
         torch.cuda.set_device(gpu_ids.pop())
         model = Gemma2QA(local_rank, rank)
-        if FLAGS.include_policy_ref_kl:
+        if load_ref_model:
             torch.cuda.set_device(gpu_ids.pop())
             ref_model = Gemma2QA(local_rank, rank)
 
     elif FLAGS.llm_name == "llama3":
         torch.cuda.set_device(gpu_ids.pop())
         model = Llama3QA(local_rank, rank)
-        if FLAGS.include_policy_ref_kl:
+        if load_ref_model:
             torch.cuda.set_device(gpu_ids.pop())
             ref_model = Llama3QA(local_rank, rank)
 
     elif FLAGS.llm_name == "llama3.2":
         torch.cuda.set_device(gpu_ids.pop())
         model = Llama32QA(local_rank, rank)
-        if FLAGS.include_policy_ref_kl:
+        if load_ref_model:
             torch.cuda.set_device(gpu_ids.pop())
             ref_model = Llama32QA(local_rank, rank)
 
@@ -105,6 +106,7 @@ def main(argv: Any) -> None:
         "reinforce_terminal_reward_version_2",
         "teacher_forcing_reinforce",
         "mml_iterative_reinforce",
+        "preference_optimization",
     ]:
         if FLAGS.metric_type in ["llm2vec", "sentence_t5"]:
             # For these metrics, we will load the metric model on a separate gpu.
@@ -114,7 +116,7 @@ def main(argv: Any) -> None:
             objective_type=FLAGS.objective_type,
             reward_name=FLAGS.metric_type,
             weights_base_folder=FLAGS.weights_base_folder,
-            ref_policy_lm=ref_model if FLAGS.include_policy_ref_kl else None,
+            ref_policy_lm=ref_model if load_ref_model else None,
         )
 
     if FLAGS.mode == "train":

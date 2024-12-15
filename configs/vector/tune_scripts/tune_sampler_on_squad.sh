@@ -23,8 +23,8 @@ do
             GPUS_PER_NODE=4 \
             CPUS_PER_GPU=6 \
             GPU_TYPE=a40 \
-            QOS=m3 \
-            TIME=04:00:00 \
+            QOS=m2 \
+            TIME=08:00:00 \
             MEM_PER_CPU=3 \
             SCRIPT=src/squadv2_finetuning.py \
             LOG_DIR=training_logs \
